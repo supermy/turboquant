@@ -1,0 +1,42 @@
+# Rust
+glm51/target/
+glm51/Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# FAISS
+faiss/*.index
+faiss/*.bin
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment
+.env
+.venv
+env/
+venv/
+
+# Trae
+.trae/

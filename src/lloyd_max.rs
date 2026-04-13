@@ -1,12 +1,38 @@
+//! Lloyd-Max 量化器
+//!
+//! 实现 Lloyd-Max 最优量化算法，针对 Beta 分布优化的标量量化。
+//! 专为 Hadamard 旋转后的单位向量设计。
+//!
+//! # 核心思想
+//! 1. Hadamard 旋转后的向量分量服从 Beta 分布
+//! 2. Lloyd-Max 算法找到最优量化中心和边界
+//! 3. 最小化量化误差的均方误差
+
+/// Lloyd-Max 量化器
+///
+/// 针对单位向量分量 (Beta 分布) 优化的标量量化器。
 pub struct LloydMaxQuantizer {
+    /// 向量维度
     pub d: usize,
+    /// 每维量化位数
     pub nbits: usize,
+    /// 量化中心数量 (k = 2^nbits)
     pub k: usize,
+    /// 量化中心点
     pub centroids: Vec<f32>,
+    /// 量化边界点
     pub boundaries: Vec<f32>,
 }
 
 impl LloydMaxQuantizer {
+    /// 创建新的 Lloyd-Max 量化器
+    ///
+    /// # 参数
+    /// - `d`: 向量维度
+    /// - `nbits`: 每维量化位数 (1-8)
+    ///
+    /// # 返回值
+    /// 初始化的量化器，已计算最优中心和边界
     pub fn new(d: usize, nbits: usize) -> Self {
         let k = 1usize << nbits;
         let mut q = Self {
@@ -20,34 +46,52 @@ impl LloydMaxQuantizer {
         q
     }
 
+    /// 构建量化码本
+    ///
+    /// 计算最优量化中心和边界。
     fn build_codebook(&mut self) {
         self.centroids = vec![0.0f32; self.k];
         self.boundaries = vec![0.0f32; self.k - 1];
 
+        // 简单情况: 一维向量，使用均匀分布
         if self.d == 1 {
             for i in 0..self.k {
                 self.centroids[i] = if i < self.k / 2 { -1.0 } else { 1.0 };
             }
         } else {
+            // 一般情况: 使用 Lloyd-Max 迭代
             self.lloyd_max_iteration();
         }
 
+        // 边界点为相邻中心的平均值
         for i in 0..self.k - 1 {
             self.boundaries[i] = 0.5 * (self.centroids[i] + self.centroids[i + 1]);
         }
     }
 
+    /// Lloyd-Max 迭代算法
+    ///
+    /// 针对 Beta 分布优化的迭代算法:
+    /// 1. 初始化: 均匀分割 [-1, 1]
+    /// 2. 迭代:
+    ///    a. 根据当前边界计算新的中心
+    ///    b. 根据新中心更新边界
+    ///    c. 收敛检查
     fn lloyd_max_iteration(&mut self) {
+        // 网格化积分参数
         let ngrid = 32768usize;
         let step = 2.0 / ngrid as f64;
+        // Beta 分布参数: α = (d - 3) / 2
         let alpha = 0.5 * (self.d as f64 - 3.0);
 
+        // 预计算权重和累积和
         let mut xs = vec![0.0f64; ngrid];
-        let mut prefix_w = vec![0.0f64; ngrid + 1];
-        let mut prefix_wx = vec![0.0f64; ngrid + 1];
+        let mut prefix_w = vec![0.0f64; ngrid + 1];   // 权重累积和
+        let mut prefix_wx = vec![0.0f64; ngrid + 1];  // 加权累积和
 
         for i in 0..ngrid {
             let x = -1.0 + (i as f64 + 0.5) * step;
+            // Beta 分布权重: (1 - x²)^α
             let one_minus_x2 = (1.0 - x * x).max(0.0);
             let w = if alpha == 0.0 {
                 1.0
@@ -61,6 +105,7 @@ impl LloydMaxQuantizer {
             prefix_wx[i + 1] = prefix_wx[i] + w * x;
         }
 
+        // 计算区间 [i0, i1] 的加权均值
         let range_mean = |i0: usize, i1: usize, fallback: f64| -> f64 {
             let w = prefix_w[i1] - prefix_w[i0];
             if w <= 0.0 {
@@ -69,6 +114,7 @@ impl LloydMaxQuantizer {
             (prefix_wx[i1] - prefix_wx[i0]) / w
         };
 
+        // 初始分割点: 等权重分割
         let mut cuts = vec![0usize; self.k + 1];
         cuts[self.k] = ngrid;
         let total_w = *prefix_w.last().unwrap();
@@ -81,6 +127,7 @@ impl LloydMaxQuantizer {
             };
         }
 
+        // 初始中心
         let mut centroids_d: Vec<f64> = (0..self.k)
             .map(|i| {
                 let left = -1.0 + 2.0 * i as f64 / self.k as f64;
@@ -89,12 +136,15 @@ impl LloydMaxQuantizer {
             })
             .collect();
 
+        // Lloyd-Max 迭代
         let mut boundaries_d = vec![0.0f64; self.k - 1];
         for _ in 0..100 {
+            // 更新边界
             for i in 0..self.k - 1 {
                 boundaries_d[i] = 0.5 * (centroids_d[i] + centroids_d[i + 1]);
             }
 
+            // 更新分割点
             cuts[0] = 0;
             cuts[self.k] = ngrid;
             for i in 1..self.k {
@@ -104,6 +154,7 @@ impl LloydMaxQuantizer {
                 };
             }
 
+            // 更新中心并检查收敛
             let mut max_delta = 0.0f64;
             for i in 0..self.k {
                 let left = if i == 0 { -1.0 } else { boundaries_d[i - 1] };
@@ -114,19 +165,34 @@ impl LloydMaxQuantizer {
                 centroids_d[i] = c;
             }
 
+            // 收敛检查
             if max_delta < 1e-8 {
                 break;
             }
         }
 
+        // 排序并转换为 f32
         centroids_d.sort_by(|a, b| a.partial_cmp(b).unwrap());
         self.centroids = centroids_d.iter().map(|&c| c as f32).collect();
     }
 
+    /// 计算编码后的字节大小
+    ///
+    /// # 返回值
+    /// 每个向量的编码字节数
     pub fn code_size(&self) -> usize {
         (self.d * self.nbits + 7) / 8
     }
 
+    /// 选择量化索引
+    ///
+    /// 根据输入值选择最近的量化中心索引。
+    ///
+    /// # 参数
+    /// - `x`: 输入值
+    ///
+    /// # 返回值
+    /// 量化中心索引 (0..k-1)
     pub fn select_index(&self, x: f32) -> u8 {
         match self.boundaries.binary_search_by(|b| b.partial_cmp(&x).unwrap()) {
             Ok(idx) => idx as u8,
@@ -134,6 +200,12 @@ impl LloydMaxQuantizer {
         }
     }
 
+    /// 编码单个索引到位流
+    ///
+    /// # 参数
+    /// - `idx`: 量化索引
+    /// - `code`: 编码缓冲区
+    /// - `i`: 第几个分量
     pub fn encode_index(&self, idx: u8, code: &mut [u8], i: usize) {
         let bit_offset = i * self.nbits;
         let byte_offset = bit_offset >> 3;
@@ -146,6 +218,14 @@ impl LloydMaxQuantizer {
         }
     }
 
+    /// 从位流解码单个索引
+    ///
+    /// # 参数
+    /// - `code`: 编码缓冲区
+    /// - `i`: 第几个分量
+    ///
+    /// # 返回值
+    /// 量化索引
     pub fn decode_index(&self, code: &[u8], i: usize) -> u8 {
         let bit_offset = i * self.nbits;
         let byte_offset = bit_offset >> 3;
@@ -159,6 +239,11 @@ impl LloydMaxQuantizer {
         ((packed >> bit_shift) & mask) as u8
     }
 
+    /// 编码整个向量
+    ///
+    /// # 参数
+    /// - `x`: 输入向量
+    /// - `code`: 输出编码缓冲区
     pub fn encode(&self, x: &[f32], code: &mut [u8]) {
         code.fill(0);
         for i in 0..self.d {
@@ -167,6 +252,11 @@ impl LloydMaxQuantizer {
         }
     }
 
+    /// 解码整个向量
+    ///
+    /// # 参数
+    /// - `code`: 编码缓冲区
+    /// - `x`: 输出向量
     pub fn decode(&self, code: &[u8], x: &mut [f32]) {
         for i in 0..self.d {
             let idx = self.decode_index(code, i);
@@ -174,6 +264,14 @@ impl LloydMaxQuantizer {
         }
     }
 
+    /// 计算编码向量与查询的距离
+    ///
+    /// # 参数
+    /// - `code`: 编码向量
+    /// - `query`: 查询向量 (已旋转)
+    ///
+    /// # 返回值
+    /// L2 距离平方
     pub fn compute_distance(&self, code: &[u8], query: &[f32]) -> f32 {
         let mut dist = 0.0f32;
         for i in 0..self.d {
@@ -189,15 +287,18 @@ impl LloydMaxQuantizer {
 mod tests {
     use super::*;
 
+    /// 测试 4-bit 量化器初始化
     #[test]
     fn test_lloyd_max_4bit() {
         let q = LloydMaxQuantizer::new(128, 4);
         assert_eq!(q.k, 16);
         assert_eq!(q.centroids.len(), 16);
         assert_eq!(q.boundaries.len(), 15);
+        // 中心应该单调递增
         assert!(q.centroids.windows(2).all(|w| w[0] <= w[1]));
     }
 
+    /// 测试编解码往返
     #[test]
     fn test_encode_decode_roundtrip() {
         let q = LloydMaxQuantizer::new(128, 4);
@@ -212,13 +313,14 @@ mod tests {
         }
     }
 
+    /// 测试编码大小计算
     #[test]
     fn test_code_size() {
         let q4 = LloydMaxQuantizer::new(128, 4);
-        assert_eq!(q4.code_size(), 64);
+        assert_eq!(q4.code_size(), 64);  // 128 * 4 / 8 = 64
         let q6 = LloydMaxQuantizer::new(128, 6);
-        assert_eq!(q6.code_size(), 96);
+        assert_eq!(q6.code_size(), 96);  // 128 * 6 / 8 = 96
         let q8 = LloydMaxQuantizer::new(128, 8);
-        assert_eq!(q8.code_size(), 128);
+        assert_eq!(q8.code_size(), 128); // 128 * 8 / 8 = 128
     }
 }

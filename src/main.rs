@@ -1,3 +1,7 @@
+//! TurboQuant 性价比综合测试
+//!
+//! 对比 TurboQuant 和 RaBitQ 的召回率、存储、速度。
+
 use std::time::Instant;
 
 use turboquant::*;
@@ -11,6 +15,7 @@ fn main() {
     println!("║  指标: 召回率、存储、速度、训练成本                            ║");
     println!("╚══════════════════════════════════════════════════════════════╝");
 
+    // 测试配置
     let d = 128;
     let nb = 10000;
     let nq = 100;
@@ -23,13 +28,16 @@ fn main() {
     println!("  查询数 nq = {}", nq);
     println!("  返回数 k = {}", k);
 
+    // 生成数据
     println!("\n生成聚类数据...");
     let data = generate_clustered_data(nb, d, n_clusters, 0.1, 42);
     let queries = generate_queries(&data, nb, nq, d, 0.05, 123);
 
+    // 计算真实最近邻
     println!("计算真实最近邻...");
     let gt = compute_ground_truth(&data, &queries, nb, nq, d, k);
 
+    // 基准测试结果结构
     struct BenchmarkResult {
         name: String,
         code_size: usize,

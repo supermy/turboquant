@@ -1,3 +1,18 @@
+//! TurboQuant Flat 索引
+//!
+//! 基于 Hadamard 旋转和 Lloyd-Max 量化的向量索引。
+//! 支持可选的 SQ8 refinement 两阶段搜索。
+//!
+//! # 核心思想
+//! 1. Hadamard 旋转: 将向量分量归一化为 Beta 分布
+//! 2. Lloyd-Max 量化: 针对分布优化量化中心
+//! 3. SQ8 refinement: 两阶段搜索提升召回率
+//!
+//! # 召回率
+//! - 4-bit: ~86%
+//! - 6-bit: ~93%
+//! - 4-bit + SQ8: ~98%
+
 use std::collections::BinaryHeap;
 
 use crate::hadamard::HadamardRotation;
@@ -5,18 +20,38 @@ use crate::lloyd_max::LloydMaxQuantizer;
 use crate::sq8::SQ8Quantizer;
 use crate::utils::{l2_normalize, next_power_of_2, FloatOrd};
 
+/// TurboQuant Flat 索引
+///
+/// 支持可选 SQ8 refinement 的向量索引。
 pub struct TurboQuantFlatIndex {
+    /// 向量维度
     pub d: usize,
+    /// 每维量化位数
     pub nbits: usize,
+    /// Hadamard 旋转器
     rotation: HadamardRotation,
+    /// Lloyd-Max 量化器
     quantizer: LloydMaxQuantizer,
+    /// 编码后的向量
     codes: Vec<u8>,
+    /// 可选的 SQ8 量化器
     sq8: Option<SQ8Quantizer>,
+    /// SQ8 编码后的向量
     sq8_codes: Vec<u8>,
+    /// 总向量数
     ntotal: usize,
 }
 
 impl TurboQuantFlatIndex {
+    /// 创建新的 TurboQuant 索引
+    ///
+    /// # 参数
+    /// - `d`: 向量维度
+    /// - `nbits`: 每维量化位数 (4, 6, 8)
+    /// - `use_sq8`: 是否使用 SQ8 refinement
+    ///
+    /// # 返回值
+    /// 初始化的索引
     pub fn new(d: usize, nbits: usize, use_sq8: bool) -> Self {
         let d_rotated = next_power_of_2(d);
         let rotation = HadamardRotation::new(d, 12345);
@@ -35,20 +70,41 @@ impl TurboQuantFlatIndex {
         }
     }
 
+    /// 训练索引
+    ///
+    /// 仅 SQ8 需要训练，TurboQuant 本身无需训练。
+    ///
+    /// # 参数
+    /// - `data`: 训练数据
+    /// - `n`: 数据点数量
     pub fn train(&mut self, data: &[f32], n: usize) {
         if let Some(ref mut sq8) = self.sq8 {
             sq8.train(data, n);
         }
     }
 
+    /// 添加向量到索引
+    ///
+    /// # 参数
+    /// - `data`: 待添加的向量
+    /// - `n`: 向量数量
+    ///
+    /// # 过程
+    /// 1. L2 归一化
+    /// 2. Hadamard 旋转
+    /// 3. Lloyd-Max 编码
+    /// 4. (可选) SQ8 编码
     pub fn add(&mut self, data: &[f32], n: usize) {
+        // 步骤 1: L2 归一化
         let mut x_normalized = data.to_vec();
         for i in 0..n {
             l2_normalize(&mut x_normalized[i * self.d..(i + 1) * self.d]);
         }
 
+        // 步骤 2: Hadamard 旋转
         let x_rotated = self.rotation.apply_batch(n, &x_normalized);
 
+        // 步骤 3: Lloyd-Max 编码
         let code_sz = self.quantizer.code_size();
         self.codes.resize((self.ntotal + n) * code_sz, 0);
 
@@ -57,6 +113,7 @@ impl TurboQuantFlatIndex {
             self.quantizer.encode(xi, &mut self.codes[(self.ntotal + i) * code_sz..(self.ntotal + i + 1) * code_sz]);
         }
 
+        // 步骤 4: SQ8 编码 (可选)
         if let Some(ref sq8) = self.sq8 {
             let sq8_sz = sq8.code_size();
             self.sq8_codes.resize((self.ntotal + n) * sq8_sz, 0);
@@ -69,12 +126,30 @@ impl TurboQuantFlatIndex {
         self.ntotal += n;
     }
 
+    /// 搜索最近邻
+    ///
+    /// # 参数
+    /// - `queries`: 查询向量
+    /// - `n`: 查询数量
+    /// - `k`: 返回数量
+    /// - `refine_factor`: refinement 倍数
+    ///
+    /// # 返回值
+    /// 每个查询的 k 个最近邻 (索引, 距离)
+    ///
+    /// # 过程
+    /// 1. 归一化查询
+    /// 2. Hadamard 旋转
+    /// 3. 粗排: Lloyd-Max 距离计算
+    /// 4. 精排: SQ8 距离计算 (可选)
     pub fn search(&self, queries: &[f32], n: usize, k: usize, refine_factor: usize) -> Vec<Vec<(usize, f32)>> {
+        // 步骤 1: 归一化查询
         let mut x_normalized = queries.to_vec();
         for i in 0..n {
             l2_normalize(&mut x_normalized[i * self.d..(i + 1) * self.d]);
         }
 
+        // 步骤 2: Hadamard 旋转
         let x_rotated = self.rotation.apply_batch(n, &x_normalized);
         let code_sz = self.quantizer.code_size();
 
@@ -83,6 +158,7 @@ impl TurboQuantFlatIndex {
         for q in 0..n {
             let query = &x_rotated[q * self.rotation.d_out..(q + 1) * self.rotation.d_out];
 
+            // 步骤 3: 粗排 - 使用 Lloyd-Max 距离
             let k1 = if self.sq8.is_some() {
                 (k * refine_factor).min(self.ntotal)
             } else {
@@ -105,6 +181,7 @@ impl TurboQuantFlatIndex {
 
             let candidates: Vec<(f32, usize)> = heap.into_iter().map(|(FloatOrd(d), i)| (d, i)).collect();
 
+            // 步骤 4: 精排 - 使用 SQ8 距离 (可选)
             let mut final_heap: BinaryHeap<(FloatOrd, usize)> = BinaryHeap::with_capacity(k);
 
             if let Some(ref sq8) = self.sq8 {
@@ -143,14 +220,17 @@ impl TurboQuantFlatIndex {
         results
     }
 
+    /// 获取总向量数
     pub fn ntotal(&self) -> usize {
         self.ntotal
     }
 
+    /// 获取编码大小
     pub fn code_size(&self) -> usize {
         self.quantizer.code_size()
     }
 
+    /// 获取总存储大小
     pub fn total_storage(&self) -> usize {
         let base = self.ntotal * self.quantizer.code_size();
         let sq8_storage = if self.sq8.is_some() {
@@ -167,6 +247,7 @@ mod tests {
     use super::*;
     use crate::utils::{compute_recall, compute_ground_truth, generate_clustered_data, generate_queries};
 
+    /// 测试 TurboQuant 4-bit 召回率
     #[test]
     fn test_turboquant_4bit_recall() {
         let d = 128;
@@ -190,6 +271,7 @@ mod tests {
         assert!(recall > 0.5, "TurboQuant 4-bit recall too low: {}", recall);
     }
 
+    /// 测试 TurboQuant 4-bit + SQ8 召回率
     #[test]
     fn test_turboquant_4bit_sq8_recall() {
         let d = 128;
@@ -213,6 +295,7 @@ mod tests {
         assert!(recall > 0.9, "TurboQuant 4-bit + SQ8 recall too low: {}", recall);
     }
 
+    /// 测试 TurboQuant 6-bit 召回率
     #[test]
     fn test_turboquant_6bit_recall() {
         let d = 128;

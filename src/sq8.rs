@@ -1,10 +1,30 @@
+//! SQ8 标量量化器
+//!
+//! 8-bit 标量量化，用于两阶段搜索的 refinement 阶段。
+//! 每个维度独立量化，存储为 1 字节。
+//!
+//! # 特点
+//! - 简单高效: 线性映射到 [0, 255]
+//! - 高精度: 相对误差 < 5%
+//! - 用于 refinement: 提升召回率
+
+/// SQ8 标量量化器
+///
+/// 每个维度独立量化，存储为 1 字节。
 pub struct SQ8Quantizer {
+    /// 向量维度
     pub d: usize,
+    /// 每维最小值
     vmin: Vec<f32>,
+    /// 每维最大值
     vmax: Vec<f32>,
 }
 
 impl SQ8Quantizer {
+    /// 创建新的 SQ8 量化器
+    ///
+    /// # 参数
+    /// - `d`: 向量维度
     pub fn new(d: usize) -> Self {
         Self {
             d,
@@ -13,10 +33,19 @@ impl SQ8Quantizer {
         }
     }
 
+    /// 训练量化器
+    ///
+    /// 计算每个维度的最小值和最大值。
+    ///
+    /// # 参数
+    /// - `data`: 训练数据
+    /// - `n`: 数据点数量
     pub fn train(&mut self, data: &[f32], n: usize) {
+        // 初始化
         self.vmin.fill(f32::MAX);
         self.vmax.fill(f32::MIN);
 
+        // 统计每维的最小值和最大值
         for i in 0..n {
             for j in 0..self.d {
                 let val = data[i * self.d + j];
@@ -25,6 +54,7 @@ impl SQ8Quantizer {
             }
         }
 
+        // 避免零区间
         for j in 0..self.d {
             if self.vmax[j] - self.vmin[j] < 1e-6 {
                 self.vmax[j] = self.vmin[j] + 1e-6;
@@ -32,27 +62,53 @@ impl SQ8Quantizer {
         }
     }
 
+    /// 计算编码大小
+    ///
+    /// # 返回值
+    /// 每个向量的编码字节数 (= d)
     pub fn code_size(&self) -> usize {
         self.d
     }
 
+    /// 编码向量
+    ///
+    /// # 参数
+    /// - `x`: 输入向量
+    /// - `code`: 输出编码 (d 字节)
     pub fn encode(&self, x: &[f32], code: &mut [u8]) {
         for j in 0..self.d {
+            // 线性映射到 [0, 1]
             let normalized = ((x[j] - self.vmin[j]) / (self.vmax[j] - self.vmin[j]))
                 .clamp(0.0, 1.0);
+            // 量化到 [0, 255]
             code[j] = (normalized * 255.0) as u8;
         }
     }
 
+    /// 解码向量
+    ///
+    /// # 参数
+    /// - `code`: 编码 (d 字节)
+    /// - `x`: 输出向量
     pub fn decode(&self, code: &[u8], x: &mut [f32]) {
         for j in 0..self.d {
+            // 反量化
             x[j] = self.vmin[j] + (code[j] as f32 / 255.0) * (self.vmax[j] - self.vmin[j]);
         }
     }
 
+    /// 计算编码向量与查询的距离
+    ///
+    /// # 参数
+    /// - `code`: 编码向量
+    /// - `query`: 查询向量 (原始空间)
+    ///
+    /// # 返回值
+    /// L2 距离平方
     pub fn compute_distance(&self, code: &[u8], query: &[f32]) -> f32 {
         let mut dist = 0.0f32;
         for j in 0..self.d {
+            // 反量化并计算距离
             let decoded = self.vmin[j] + (code[j] as f32 / 255.0) * (self.vmax[j] - self.vmin[j]);
             let diff = decoded - query[j];
             dist += diff * diff;
@@ -66,24 +122,29 @@ mod tests {
     use super::*;
     use crate::utils::l2_distance;
 
+    /// 测试 SQ8 编解码往返
     #[test]
     fn test_sq8_roundtrip() {
         let d = 128;
         let mut sq8 = SQ8Quantizer::new(d);
+        // 生成训练数据
         let data: Vec<f32> = (0..1000 * d).map(|i| (i as f32 * 0.001).sin()).collect();
         sq8.train(&data, 1000);
 
+        // 编码解码
         let x = &data[0..d];
         let mut code = vec![0u8; sq8.code_size()];
         sq8.encode(x, &mut code);
         let mut decoded = vec![0.0f32; d];
         sq8.decode(&code, &mut decoded);
 
+        // 检查相对误差
         let orig_norm = crate::utils::l2_norm(x);
         let err = l2_distance(x, &decoded).sqrt();
-        assert!(err / orig_norm < 0.07, "SQ8 relative error too large: {}", err / orig_norm);
+        assert!(err / orig_norm < 0.07, "SQ8 相对误差过大: {}", err / orig_norm);
     }
 
+    /// 测试 SQ8 距离精度
     #[test]
     fn test_sq8_distance_accuracy() {
         let d = 64;
@@ -95,10 +156,9 @@ mod tests {
         let b = &data[d..2 * d];
 
         let mut code_a = vec![0u8; sq8.code_size()];
-        let mut code_b = vec![0u8; sq8.code_size()];
         sq8.encode(a, &mut code_a);
-        sq8.encode(b, &mut code_b);
 
+        // 比较 SQ8 距离与真实距离
         let true_dist = l2_distance(a, b);
         let sq8_dist = sq8.compute_distance(&code_a, b);
         assert!((true_dist - sq8_dist).abs() / true_dist < 0.1);

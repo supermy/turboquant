@@ -40,3 +40,8 @@ venv/
 
 # Trae
 .trae/
+
+
+# Added by cargo
+
+/target

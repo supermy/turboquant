@@ -27,6 +27,7 @@ pub mod turboquant;
 pub mod rabitq;
 pub mod kmeans;
 pub mod ivf;
+pub mod sift;
 
 pub use utils::*;
 pub use hadamard::HadamardRotation;
@@ -36,3 +37,4 @@ pub use turboquant::TurboQuantFlatIndex;
 pub use rabitq::{RaBitQCodec, RaBitQFlatIndex};
 pub use kmeans::KMeans;
 pub use ivf::RaBitQIVFIndex;
+pub use sift::SiftSmallDataset;

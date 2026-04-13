@@ -4,8 +4,8 @@
 
 use std::time::Instant;
 
-use turboquant::*;
-use turboquant::utils::{generate_clustered_data, generate_queries, compute_ground_truth, compute_recall};
+use ::turboquant::*;
+use ::turboquant::utils::{generate_clustered_data, generate_queries, compute_ground_truth, compute_recall};
 
 fn main() {
     println!("╔══════════════════════════════════════════════════════════════╗");
@@ -64,7 +64,7 @@ fn main() {
         let res = index.search(&queries, nq, k, 1);
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
 
-        let ids: Vec<Vec<usize>> = res.iter().map(|r| r.iter().map(|&(i, _)| i).collect()).collect();
+        let ids: Vec<Vec<usize>> = res.iter().map(|r| r.iter().map(|(i, _)| *i).collect()).collect();
         let recall = compute_recall(&ids, &gt, nq, k);
 
         results.push(BenchmarkResult {
@@ -88,7 +88,7 @@ fn main() {
         let res = index.search(&queries, nq, k, 1);
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
 
-        let ids: Vec<Vec<usize>> = res.iter().map(|r| r.iter().map(|&(i, _)| i).collect()).collect();
+        let ids: Vec<Vec<usize>> = res.iter().map(|r| r.iter().map(|(i, _)| *i).collect()).collect();
         let recall = compute_recall(&ids, &gt, nq, k);
 
         results.push(BenchmarkResult {
@@ -112,7 +112,7 @@ fn main() {
         let res = index.search(&queries, nq, k, 10);
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
 
-        let ids: Vec<Vec<usize>> = res.iter().map(|r| r.iter().map(|&(i, _)| i).collect()).collect();
+        let ids: Vec<Vec<usize>> = res.iter().map(|r| r.iter().map(|(i, _)| *i).collect()).collect();
         let recall = compute_recall(&ids, &gt, nq, k);
 
         results.push(BenchmarkResult {
@@ -136,7 +136,7 @@ fn main() {
         let res = index.search(&queries, nq, k, 1);
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
 
-        let ids: Vec<Vec<usize>> = res.iter().map(|r| r.iter().map(|&(i, _)| i).collect()).collect();
+        let ids: Vec<Vec<usize>> = res.iter().map(|r| r.iter().map(|(i, _)| *i).collect()).collect();
         let recall = compute_recall(&ids, &gt, nq, k);
 
         results.push(BenchmarkResult {
@@ -160,7 +160,7 @@ fn main() {
         let res = index.search(&queries, nq, k, 10);
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
 
-        let ids: Vec<Vec<usize>> = res.iter().map(|r| r.iter().map(|&(i, _)| i).collect()).collect();
+        let ids: Vec<Vec<usize>> = res.iter().map(|r| r.iter().map(|(i, _)| *i).collect()).collect();
         let recall = compute_recall(&ids, &gt, nq, k);
 
         results.push(BenchmarkResult {
@@ -184,7 +184,7 @@ fn main() {
         let res = index.search(&queries, nq, k, 64, 10);
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
 
-        let ids: Vec<Vec<usize>> = res.iter().map(|r| r.iter().map(|&(i, _)| i).collect()).collect();
+        let ids: Vec<Vec<usize>> = res.iter().map(|r| r.iter().map(|(i, _)| *i).collect()).collect();
         let recall = compute_recall(&ids, &gt, nq, k);
 
         results.push(BenchmarkResult {

@@ -20,13 +20,13 @@ use crate::utils::FloatOrd;
 /// 聚类数据
 ///
 /// 存储单个聚类的编码向量和 ID。
-struct ClusterData {
+pub struct ClusterData {
     /// RaBitQ 编码
-    codes: Vec<u8>,
+    pub codes: Vec<u8>,
     /// 原始向量 ID
-    ids: Vec<usize>,
+    pub ids: Vec<usize>,
     /// SQ8 编码
-    sq8_codes: Vec<u8>,
+    pub sq8_codes: Vec<u8>,
 }
 
 /// RaBitQ IVF 索引
@@ -43,17 +43,17 @@ pub struct RaBitQIVFIndex {
     pub is_inner_product: bool,
 
     /// KMeans 聚类器
-    kmeans: KMeans,
+    pub kmeans: KMeans,
     /// 每个聚类的编解码器
-    codecs: Vec<RaBitQCodec>,
+    pub codecs: Vec<RaBitQCodec>,
     /// 聚类中心
-    cluster_centroids: Vec<Vec<f32>>,
+    pub cluster_centroids: Vec<Vec<f32>>,
     /// 聚类数据
-    clusters: Vec<ClusterData>,
+    pub clusters: Vec<ClusterData>,
     /// 每个聚类的 SQ8 量化器
-    sq8_quantizers: Vec<Option<SQ8Quantizer>>,
+    pub sq8_quantizers: Vec<Option<SQ8Quantizer>>,
     /// 总向量数
-    ntotal: usize,
+    pub ntotal: usize,
 }
 
 impl RaBitQIVFIndex {

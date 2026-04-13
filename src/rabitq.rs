@@ -251,17 +251,17 @@ pub struct RaBitQFlatIndex {
     /// 是否为内积距离
     pub is_inner_product: bool,
     /// 数据质心
-    centroid: Vec<f32>,
+    pub centroid: Vec<f32>,
     /// 编解码器
-    codec: RaBitQCodec,
+    pub codec: RaBitQCodec,
     /// 编码后的向量
-    codes: Vec<u8>,
+    pub codes: Vec<u8>,
     /// 可选的 SQ8 量化器
-    sq8: Option<SQ8Quantizer>,
+    pub sq8: Option<SQ8Quantizer>,
     /// SQ8 编码后的向量
-    sq8_codes: Vec<u8>,
+    pub sq8_codes: Vec<u8>,
     /// 总向量数
-    ntotal: usize,
+    pub ntotal: usize,
 }
 
 impl RaBitQFlatIndex {

@@ -26,13 +26,13 @@ pub struct HadamardRotation {
     /// 输出维度 (补齐到 2 的幂)
     pub d_out: usize,
     /// 第一轮随机符号
-    signs1: Vec<f32>,
+    pub signs1: Vec<f32>,
     /// 第二轮随机符号
-    signs2: Vec<f32>,
+    pub signs2: Vec<f32>,
     /// 第三轮随机符号
-    signs3: Vec<f32>,
+    pub signs3: Vec<f32>,
     /// 缩放因子 1 / (d * √d)
-    scale: f32,
+    pub scale: f32,
 }
 
 /// 原地快速 Walsh-Hadamard 变换

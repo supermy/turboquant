@@ -28,6 +28,7 @@ pub mod rabitq;
 pub mod kmeans;
 pub mod ivf;
 pub mod sift;
+pub mod store;
 
 pub use utils::*;
 pub use hadamard::HadamardRotation;
@@ -38,3 +39,4 @@ pub use rabitq::{RaBitQCodec, RaBitQFlatIndex};
 pub use kmeans::KMeans;
 pub use ivf::RaBitQIVFIndex;
 pub use sift::SiftSmallDataset;
+pub use store::{VectorStore, IndexMeta, IndexType, StoreStats};

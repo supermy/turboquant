@@ -15,9 +15,9 @@ pub struct SQ8Quantizer {
     /// 向量维度
     pub d: usize,
     /// 每维最小值
-    vmin: Vec<f32>,
+    pub vmin: Vec<f32>,
     /// 每维最大值
-    vmax: Vec<f32>,
+    pub vmax: Vec<f32>,
 }
 
 impl SQ8Quantizer {

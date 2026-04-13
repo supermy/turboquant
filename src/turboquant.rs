@@ -29,17 +29,17 @@ pub struct TurboQuantFlatIndex {
     /// 每维量化位数
     pub nbits: usize,
     /// Hadamard 旋转器
-    rotation: HadamardRotation,
+    pub rotation: HadamardRotation,
     /// Lloyd-Max 量化器
-    quantizer: LloydMaxQuantizer,
+    pub quantizer: LloydMaxQuantizer,
     /// 编码后的向量
-    codes: Vec<u8>,
+    pub codes: Vec<u8>,
     /// 可选的 SQ8 量化器
-    sq8: Option<SQ8Quantizer>,
+    pub sq8: Option<SQ8Quantizer>,
     /// SQ8 编码后的向量
-    sq8_codes: Vec<u8>,
+    pub sq8_codes: Vec<u8>,
     /// 总向量数
-    ntotal: usize,
+    pub ntotal: usize,
 }
 
 impl TurboQuantFlatIndex {

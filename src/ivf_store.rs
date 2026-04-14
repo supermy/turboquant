@@ -29,11 +29,11 @@ use rocksdb::{
     BlockBasedIndexType, BlockBasedOptions, CuckooTableOptions, Direction, IteratorMode,
     Options, ReadOptions, SliceTransform, WriteBatch, DB,
 };
-use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, DBPinnableSlice};
+use rocksdb::{ColumnFamily, ColumnFamilyDescriptor};
 
 use crate::rabitq::{compute_query_factors_into, QueryFactorsData, RaBitQCodec};
 use crate::sq8::SQ8Quantizer;
-use crate::utils::{l2_distance, FloatOrd};
+use crate::utils::{l2_distance_simd, FloatOrd};
 
 const CF_RABITQ_SIGNS: &str = "rabitq_signs";
 const CF_RABITQ_FACTORS: &str = "rabitq_factors";
@@ -447,11 +447,15 @@ impl RocksDBIVFIndex {
         let mut dists: Vec<(f32, usize)> = (0..self.nlist)
             .map(|c| {
                 let centroid = &self.centroids[c * self.d..(c + 1) * self.d];
-                (l2_distance(query, centroid), c)
+                (l2_distance_simd(query, centroid), c)
             })
             .collect();
+        let np = nprobe.min(self.nlist);
+        if np < self.nlist {
+            dists.select_nth_unstable_by(np, |a, b| a.0.partial_cmp(&b.0).unwrap());
+        }
+        dists.truncate(np);
         dists.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-        dists.truncate(nprobe.min(self.nlist));
         dists
     }
 
@@ -748,8 +752,6 @@ impl RocksDBTQIVFIndex {
 
         let (lo_lut, hi_lut) = self.quantizer.build_split_lut(&query_rotated);
         let code_sz = self.quantizer.code_size();
-        let chunk_size = 16usize;
-        let n_chunks = (code_sz + chunk_size - 1) / chunk_size;
 
         for (_, cluster_id) in &nearest_clusters {
             let start = Self::cluster_key(*cluster_id as u16, 0);
@@ -773,14 +775,10 @@ impl RocksDBTQIVFIndex {
                     let global_id = self.decode_global_id(*cluster_id, local_id);
 
                     let mut dist = 0.0f32;
-                    for chunk_idx in 0..n_chunks {
-                        let chunk_start = chunk_idx * chunk_size;
-                        let chunk_end = (chunk_start + chunk_size).min(code_sz);
-                        for j in chunk_start..chunk_end {
-                            let byte = code_val[j] as usize;
-                            dist += lo_lut[j][byte & 0xF] + hi_lut[j][byte >> 4];
-                        }
-                        if heap.len() >= k1 && dist > heap.peek().unwrap().0 .0 {
+                    for j in 0..code_sz {
+                        let byte = code_val[j] as usize;
+                        dist += lo_lut[j][byte & 0xF] + hi_lut[j][byte >> 4];
+                        if j & 0xF == 0xF && heap.len() >= k1 && dist > heap.peek().unwrap().0 .0 {
                             dist = f32::INFINITY;
                             break;
                         }
@@ -847,11 +845,15 @@ impl RocksDBTQIVFIndex {
         let mut dists: Vec<(f32, usize)> = (0..self.nlist)
             .map(|c| {
                 let centroid = &self.centroids[c * self.d..(c + 1) * self.d];
-                (l2_distance(query, centroid), c)
+                (l2_distance_simd(query, centroid), c)
             })
             .collect();
+        let np = nprobe.min(self.nlist);
+        if np < self.nlist {
+            dists.select_nth_unstable_by(np, |a, b| a.0.partial_cmp(&b.0).unwrap());
+        }
+        dists.truncate(np);
         dists.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-        dists.truncate(nprobe.min(self.nlist));
         dists
     }
 

@@ -50,6 +50,164 @@ pub fn l2_distance(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b.iter()).map(|(&x, &y)| (x - y) * (x - y)).sum()
 }
 
+#[inline(always)]
+pub fn l2_distance_simd(a: &[f32], b: &[f32]) -> f32 {
+    let n = a.len();
+    let mut sum = 0.0f32;
+    let mut i = 0;
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        use std::arch::aarch64::*;
+        let mut vsum = vdupq_f32(0.0);
+        while i + 4 <= n {
+            let va = vld1q_f32(a.as_ptr().add(i));
+            let vb = vld1q_f32(b.as_ptr().add(i));
+            let diff = vsubq_f32(va, vb);
+            vsum = vfmaq_f32(vsum, diff, diff);
+            i += 4;
+        }
+        sum = vaddvq_f32(vsum);
+    }
+
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        while i + 4 <= n {
+            let diff0 = a[i] - b[i];
+            let diff1 = a[i + 1] - b[i + 1];
+            let diff2 = a[i + 2] - b[i + 2];
+            let diff3 = a[i + 3] - b[i + 3];
+            sum += diff0 * diff0 + diff1 * diff1 + diff2 * diff2 + diff3 * diff3;
+            i += 4;
+        }
+    }
+
+    while i < n {
+        let diff = a[i] - b[i];
+        sum += diff * diff;
+        i += 1;
+    }
+    sum
+}
+
+#[inline(always)]
+pub fn dot_product_simd(a: &[f32], b: &[f32]) -> f32 {
+    let n = a.len();
+    let mut sum = 0.0f32;
+    let mut i = 0;
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        use std::arch::aarch64::*;
+        let mut vsum = vdupq_f32(0.0);
+        while i + 4 <= n {
+            let va = vld1q_f32(a.as_ptr().add(i));
+            let vb = vld1q_f32(b.as_ptr().add(i));
+            vsum = vfmaq_f32(vsum, va, vb);
+            i += 4;
+        }
+        sum = vaddvq_f32(vsum);
+    }
+
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        while i + 4 <= n {
+            sum += a[i] * b[i] + a[i + 1] * b[i + 1] + a[i + 2] * b[i + 2] + a[i + 3] * b[i + 3];
+            i += 4;
+        }
+    }
+
+    while i < n {
+        sum += a[i] * b[i];
+        i += 1;
+    }
+    sum
+}
+
+#[inline(always)]
+pub fn sq8_distance_simd(code: &[u8], query: &[f32], vmin: &[f32], scale: &[f32], d: usize) -> f32 {
+    let mut dist = 0.0f32;
+    let mut i = 0;
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        use std::arch::aarch64::*;
+        let mut vsum = vdupq_f32(0.0);
+        while i + 4 <= d {
+            let codes = vld1_u8(code.as_ptr().add(i));
+            let codes32 = vmovl_u16(vget_low_u16(vmovl_u8(codes)));
+            let codes_f = vcvtq_f32_u32(codes32);
+            let s = vld1q_f32(scale.as_ptr().add(i));
+            let v = vld1q_f32(vmin.as_ptr().add(i));
+            let q = vld1q_f32(query.as_ptr().add(i));
+            let decoded = vfmaq_f32(v, codes_f, s);
+            let diff = vsubq_f32(decoded, q);
+            vsum = vfmaq_f32(vsum, diff, diff);
+            i += 4;
+        }
+        dist = vaddvq_f32(vsum);
+    }
+
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        while i + 4 <= d {
+            for j in 0..4 {
+                let decoded = vmin[i + j] + code[i + j] as f32 * scale[i + j];
+                let diff = decoded - query[i + j];
+                dist += diff * diff;
+            }
+            i += 4;
+        }
+    }
+
+    while i < d {
+        let decoded = vmin[i] + code[i] as f32 * scale[i];
+        let diff = decoded - query[i];
+        dist += diff * diff;
+        i += 1;
+    }
+    dist
+}
+
+#[inline(always)]
+pub fn split_lut_distance_simd(code: &[u8], lo_lut: &[[f32; 16]], hi_lut: &[[f32; 16]], code_sz: usize) -> f32 {
+    let mut dist = 0.0f32;
+    let mut j = 0;
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        use std::arch::aarch64::*;
+        let mut vsum = vdupq_f32(0.0);
+        while j + 4 <= code_sz {
+            for k in 0..4 {
+                let idx = j + k;
+                let byte = code[idx] as usize;
+                dist += lo_lut[idx][byte & 0xF] + hi_lut[idx][byte >> 4];
+            }
+            j += 4;
+        }
+    }
+
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        while j + 4 <= code_sz {
+            for k in 0..4 {
+                let idx = j + k;
+                let byte = code[idx] as usize;
+                dist += lo_lut[idx][byte & 0xF] + hi_lut[idx][byte >> 4];
+            }
+            j += 4;
+        }
+    }
+
+    while j < code_sz {
+        let byte = code[j] as usize;
+        dist += lo_lut[j][byte & 0xF] + hi_lut[j][byte >> 4];
+        j += 1;
+    }
+    dist
+}
+
 /// 计算向量的 L2 范数平方
 ///
 /// # 参数

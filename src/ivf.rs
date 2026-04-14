@@ -559,8 +559,7 @@ impl TurboQuantIVFIndex {
 
                 if use_split_lut {
                     let (lo_lut, hi_lut) = self.quantizer.build_split_lut(&query_rotated);
-                    let chunk_size = 16usize;
-                    let n_chunks = (code_sz + chunk_size - 1) / chunk_size;
+                    let early_stop_threshold = if k1 > 0 { Some(f32::INFINITY) } else { None };
 
                     for (_, cluster_id) in &nearest_buf {
                         let cluster = &self.clusters[*cluster_id];
@@ -570,16 +569,17 @@ impl TurboQuantIVFIndex {
                         }
 
                         for v in 0..n_vectors {
+                            if v + 2 < n_vectors {
+                                unsafe {
+                                    prefetch_read(cluster.codes.as_ptr().add((v + 1) * code_sz));
+                                }
+                            }
                             let code = &cluster.codes[v * code_sz..(v + 1) * code_sz];
                             let mut dist = 0.0f32;
-                            for chunk_idx in 0..n_chunks {
-                                let start = chunk_idx * chunk_size;
-                                let end = (start + chunk_size).min(code_sz);
-                                for j in start..end {
-                                    let byte = code[j] as usize;
-                                    dist += lo_lut[j][byte & 0xF] + hi_lut[j][byte >> 4];
-                                }
-                                if heap.len() >= k1 && dist > heap.peek().unwrap().0 .0 {
+                            for j in 0..code_sz {
+                                let byte = code[j] as usize;
+                                dist += lo_lut[j][byte & 0xF] + hi_lut[j][byte >> 4];
+                                if j & 0xF == 0xF && heap.len() >= k1 && dist > heap.peek().unwrap().0 .0 {
                                     dist = f32::INFINITY;
                                     break;
                                 }

@@ -2,7 +2,7 @@
 //!
 //! 实现 KMeans 聚类用于 IVF 索引的向量分区。
 
-use crate::utils::l2_distance;
+use crate::utils::{l2_distance, l2_distance_simd};
 use rand::Rng;
 use rand::SeedableRng;
 
@@ -144,7 +144,7 @@ impl KMeans {
         let nprobe = nprobe.min(self.k);
         buf.clear();
         buf.extend((0..self.k)
-            .map(|i| (l2_distance(x, &self.centroids[i * self.d..(i + 1) * self.d]), i)));
+            .map(|i| (l2_distance_simd(x, &self.centroids[i * self.d..(i + 1) * self.d]), i)));
         if nprobe < self.k {
             buf.select_nth_unstable_by(nprobe, |a, b| a.0.partial_cmp(&b.0).unwrap());
         }

@@ -18,8 +18,6 @@
 //! | Survey 模式 | 原生支持 | 不支持 |
 //! | C 依赖 | CMake + NNG C 库 | 纯 Rust (zeromq crate) |
 
-use std::collections::BinaryHeap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
@@ -29,7 +27,6 @@ use crate::ivf::{RaBitQIVFIndex, TurboQuantIVFIndex};
 use crate::ivf_store::{RocksDBIVFIndex, RocksDBTQIVFIndex};
 use crate::turboquant::TurboQuantFlatIndex;
 use crate::rabitq::RaBitQFlatIndex;
-use crate::utils::FloatOrd;
 
 const DEFAULT_QUERY_URL: &str = "tcp://127.0.0.1:5555";
 const DEFAULT_WRITE_URL: &str = "tcp://127.0.0.1:5556";
@@ -235,6 +232,29 @@ impl VectorEngineService {
         let pending = self.pending_vectors.read();
         pending.len() / self.d
     }
+
+    pub fn load_index(&self, path: &str) -> Result<usize, String> {
+        let store = crate::store::VectorStore::open(&std::path::PathBuf::from(path))?;
+        let meta = store.load_meta()?;
+
+        match meta.index_type {
+            crate::store::IndexType::RaBitQIVF => {
+                let index = store.load_rabitq_ivf()?;
+                let ntotal = index.ntotal();
+                *self.persisted_index.write() = PersistedIndex::RaBitQIVF(
+                    crate::ivf_store::RocksDBIVFIndex::open(&std::path::PathBuf::from(path))?
+                );
+                Ok(ntotal)
+            }
+            crate::store::IndexType::TurboQuant => {
+                let persisted = crate::ivf_store::RocksDBTQIVFIndex::open(&std::path::PathBuf::from(path))?;
+                let ntotal = persisted.ntotal();
+                *self.persisted_index.write() = PersistedIndex::TurboQuantIVF(persisted);
+                Ok(ntotal)
+            }
+            _ => Err(format!("不支持的索引类型: {:?}", meta.index_type)),
+        }
+    }
 }
 
 pub struct TurboQuantServer {
@@ -411,7 +431,10 @@ impl TurboQuantServer {
                             }
                         }
                         Ok(WriteRequest::LoadIndex { path }) => {
-                            WriteResponse::Error { message: "LoadIndex 尚未实现".to_string() }
+                            match engine.load_index(&path) {
+                                Ok(ntotal) => WriteResponse::IndexLoaded { ntotal: ntotal as u32 },
+                                Err(e) => WriteResponse::Error { message: e },
+                            }
                         }
                         Ok(WriteRequest::Flush) => WriteResponse::Flushed,
                         Err(_) => WriteResponse::Error { message: "反序列化失败".to_string() },

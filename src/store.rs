@@ -296,7 +296,7 @@ impl VectorStore {
             .map_err(|e| format!("写入元数据失败: {}", e))
     }
 
-    fn load_meta(&self) -> Result<IndexMeta, String> {
+    pub fn load_meta(&self) -> Result<IndexMeta, String> {
         let val = self
             .db
             .get(b"meta")

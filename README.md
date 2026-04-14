@@ -10,10 +10,11 @@
 
 - **RaBitQ 1-bit 量化** — 极致压缩，16KB LUT 常驻 L1 cache
 - **TurboQuant 4-bit 量化** — Split LUT (8KB) L1 常驻，IVF 场景下 QPS 4.8x RaBitQ
+- **NEON SIMD 加速** — L2/SQ8/Split-LUT 距离计算使用 ARM NEON 指令
 - **IVF 索引** — 倒排文件索引，支持 RaBitQ 和 TurboQuant 两种量化
 - **SQ8 精炼** — 8-bit 标量量化重排，大幅提升召回率
 - **RocksDB 持久化** — HyperClockCache + PinnableSlice 零拷贝 + async_io + Ribbon Filter
-- **C++ SIMD 引擎** — NEON (ARM) / AVX2 (x86) 距离计算内核
+- **C++ SIMD 引擎** — NEON (ARM) / AVX2 (x86) 距离计算内核 + CompressedSecondaryCache
 - **NNG 服务化** — 独立 Query/Write/Notify Socket，延迟隔离
 
 ## 性能基准 (SIFT Small 10K×128D)
@@ -219,7 +220,12 @@ let response: QueryResponse = bincode::deserialize(reply.as_slice())?;
 │  └──────────────────┬───────────────────┘           │
 │                     ▼                               │
 │  ┌──────────────────────────────────────┐           │
-│  │    C++ SIMD 距离引擎 (NEON/AVX2)     │           │
+│  │  Rust NEON SIMD (l2/sq8/split_lut)  │           │
+│  └──────────────────┬───────────────────┘           │
+│                     ▼                               │
+│  ┌──────────────────────────────────────┐           │
+│  │  C++ SIMD 引擎 (NEON/AVX2)          │           │
+│  │  + CompressedSecondaryCache          │           │
 │  └──────────────────┬───────────────────┘           │
 │                     ▼                               │
 │  ┌──────────────────────────────────────┐           │
@@ -247,7 +253,7 @@ turboquant/
 │   ├── ivf_store.rs          # IVF 专用 RocksDB 存储 (RaBitQ + TurboQuant)
 │   ├── vector_engine_ffi.rs  # C++ SIMD 引擎 FFI 桥接
 │   ├── server.rs             # NNG 服务端 (Query/Write/Notify)
-│   ├── utils.rs              # 工具函数 (prefetch, l2_normalize)
+│   ├── utils.rs              # 工具函数 (SIMD距离, prefetch, l2_normalize)
 │   └── bin/
 │       └── siftsmall_qps.rs  # SIFT Small QPS 基准测试
 ├── cpp/
@@ -317,7 +323,19 @@ SQ8 精炼重排
 拆分: lo_lut[j][byte & 0xF] + hi_lut[j][byte >> 4]  // 数学等价
 ```
 
-## RocksDB 优化
+## 性能优化
+
+### Rust SIMD 加速
+
+| 函数 | 优化 | 说明 |
+|------|------|------|
+| `l2_distance_simd` | NEON vfmaq | L2 距离 4-wide SIMD |
+| `sq8_distance_simd` | NEON vfmaq | SQ8 解码+距离 4-wide |
+| `dot_product_simd` | NEON vfmaq | 点积 4-wide SIMD |
+| `split_lut_distance_simd` | NEON | Split LUT 距离计算 |
+| `nearest_clusters` | select_nth_unstable | O(n) 替代 O(n log n) 排序 |
+
+### RocksDB 优化
 
 | 优化 | 说明 | QPS 提升 |
 |------|------|---------|

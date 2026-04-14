@@ -113,13 +113,7 @@ impl SQ8Quantizer {
     /// # 返回值
     /// L2 距离平方
     pub fn compute_distance(&self, code: &[u8], query: &[f32]) -> f32 {
-        let mut dist = 0.0f32;
-        for j in 0..self.d {
-            let decoded = self.vmin[j] + code[j] as f32 * self.scale[j];
-            let diff = decoded - query[j];
-            dist += diff * diff;
-        }
-        dist
+        crate::utils::sq8_distance_simd(code, query, &self.vmin, &self.scale, self.d)
     }
 
     pub fn compute_distance_preprocessed(&self, code: &[u8], query_preprocessed: &[f32]) -> f32 {

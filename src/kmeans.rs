@@ -97,7 +97,8 @@ impl KMeans {
             for i in 0..self.k {
                 if counts[i] > 0 {
                     for j in 0..self.d {
-                        self.centroids[i * self.d + j] = new_centroids[i * self.d + j] / counts[i] as f32;
+                        self.centroids[i * self.d + j] =
+                            new_centroids[i * self.d + j] / counts[i] as f32;
                     }
                 }
             }
@@ -143,8 +144,12 @@ impl KMeans {
     pub fn nearest_clusters_into(&self, x: &[f32], nprobe: usize, buf: &mut Vec<(f32, usize)>) {
         let nprobe = nprobe.min(self.k);
         buf.clear();
-        buf.extend((0..self.k)
-            .map(|i| (l2_distance_simd(x, &self.centroids[i * self.d..(i + 1) * self.d]), i)));
+        buf.extend((0..self.k).map(|i| {
+            (
+                l2_distance_simd(x, &self.centroids[i * self.d..(i + 1) * self.d]),
+                i,
+            )
+        }));
         if nprobe < self.k {
             buf.select_nth_unstable_by(nprobe, |a, b| a.0.partial_cmp(&b.0).unwrap());
         }

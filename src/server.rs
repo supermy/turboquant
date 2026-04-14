@@ -18,15 +18,15 @@
 //! | Survey 模式 | 原生支持 | 不支持 |
 //! | C 依赖 | CMake + NNG C 库 | 纯 Rust (zeromq crate) |
 
+use parking_lot::RwLock;
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
-use parking_lot::RwLock;
 
 use crate::ivf::{RaBitQIVFIndex, TurboQuantIVFIndex};
 use crate::ivf_store::{RocksDBIVFIndex, RocksDBTQIVFIndex};
-use crate::turboquant::TurboQuantFlatIndex;
 use crate::rabitq::RaBitQFlatIndex;
+use crate::turboquant::TurboQuantFlatIndex;
 
 const DEFAULT_QUERY_URL: &str = "tcp://127.0.0.1:5555";
 const DEFAULT_WRITE_URL: &str = "tcp://127.0.0.1:5556";
@@ -142,7 +142,12 @@ impl VectorEngineService {
         (start_id..start_id + n as u32).collect()
     }
 
-    pub fn build_ivf_index(&self, nlist: usize, index_type: u8, quantization: u8) -> Result<(usize, usize), String> {
+    pub fn build_ivf_index(
+        &self,
+        nlist: usize,
+        index_type: u8,
+        quantization: u8,
+    ) -> Result<(usize, usize), String> {
         let pending = self.pending_vectors.read();
         let n = pending.len() / self.d;
         if n == 0 {
@@ -160,7 +165,8 @@ impl VectorEngineService {
                 Ok((nlist, ntotal))
             }
             1 => {
-                let mut index = TurboQuantIVFIndex::new(self.d, nlist, quantization as usize, use_sq8);
+                let mut index =
+                    TurboQuantIVFIndex::new(self.d, nlist, quantization as usize, use_sq8);
                 index.train(&pending, n);
                 index.add(&pending, n);
                 let ntotal = index.ntotal();
@@ -190,39 +196,81 @@ impl VectorEngineService {
         }
     }
 
-    pub fn search_memory(&self, query: &[f32], k: usize, nprobe: usize, refine_factor: usize) -> Vec<(u32, f32)> {
+    pub fn search_memory(
+        &self,
+        query: &[f32],
+        k: usize,
+        nprobe: usize,
+        refine_factor: usize,
+    ) -> Vec<(u32, f32)> {
         let mem_idx = self.memory_index.read();
         match &*mem_idx {
             MemoryIndex::RaBitQIVF(index) => {
                 let results = index.search(query, 1, k, nprobe, refine_factor);
-                results.into_iter().next().unwrap_or_default().into_iter().map(|(id, dist)| (id as u32, dist)).collect()
+                results
+                    .into_iter()
+                    .next()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(id, dist)| (id as u32, dist))
+                    .collect()
             }
             MemoryIndex::TurboQuantIVF(index) => {
                 let results = index.search(query, 1, k, nprobe, refine_factor);
-                results.into_iter().next().unwrap_or_default().into_iter().map(|(id, dist)| (id as u32, dist)).collect()
+                results
+                    .into_iter()
+                    .next()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(id, dist)| (id as u32, dist))
+                    .collect()
             }
             MemoryIndex::RaBitQFlat(index) => {
                 let results = index.search(query, 1, k, 1);
-                results.into_iter().next().unwrap_or_default().into_iter().map(|(id, dist)| (id as u32, dist)).collect()
+                results
+                    .into_iter()
+                    .next()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(id, dist)| (id as u32, dist))
+                    .collect()
             }
             MemoryIndex::TurboQuantFlat(index) => {
                 let results = index.search(query, 1, k, 1);
-                results.into_iter().next().unwrap_or_default().into_iter().map(|(id, dist)| (id as u32, dist)).collect()
+                results
+                    .into_iter()
+                    .next()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(id, dist)| (id as u32, dist))
+                    .collect()
             }
             MemoryIndex::None => vec![],
         }
     }
 
-    pub fn search_persisted(&self, query: &[f32], k: usize, nprobe: usize, refine_factor: usize) -> Vec<(u32, f32)> {
+    pub fn search_persisted(
+        &self,
+        query: &[f32],
+        k: usize,
+        nprobe: usize,
+        refine_factor: usize,
+    ) -> Vec<(u32, f32)> {
         let pers_idx = self.persisted_index.read();
         match &*pers_idx {
             PersistedIndex::RaBitQIVF(index) => {
                 let results = index.search(query, k, nprobe, refine_factor);
-                results.into_iter().map(|(id, dist)| (id as u32, dist)).collect()
+                results
+                    .into_iter()
+                    .map(|(id, dist)| (id as u32, dist))
+                    .collect()
             }
             PersistedIndex::TurboQuantIVF(index) => {
                 let results = index.search(query, k, nprobe, refine_factor);
-                results.into_iter().map(|(id, dist)| (id as u32, dist)).collect()
+                results
+                    .into_iter()
+                    .map(|(id, dist)| (id as u32, dist))
+                    .collect()
             }
             PersistedIndex::None => vec![],
         }
@@ -242,12 +290,13 @@ impl VectorEngineService {
                 let index = store.load_rabitq_ivf()?;
                 let ntotal = index.ntotal();
                 *self.persisted_index.write() = PersistedIndex::RaBitQIVF(
-                    crate::ivf_store::RocksDBIVFIndex::open(&std::path::PathBuf::from(path))?
+                    crate::ivf_store::RocksDBIVFIndex::open(&std::path::PathBuf::from(path))?,
                 );
                 Ok(ntotal)
             }
             crate::store::IndexType::TurboQuant => {
-                let persisted = crate::ivf_store::RocksDBTQIVFIndex::open(&std::path::PathBuf::from(path))?;
+                let persisted =
+                    crate::ivf_store::RocksDBTQIVFIndex::open(&std::path::PathBuf::from(path))?;
                 let ntotal = persisted.ntotal();
                 *self.persisted_index.write() = PersistedIndex::TurboQuantIVF(persisted);
                 Ok(ntotal)
@@ -304,12 +353,14 @@ impl TurboQuantServer {
 
         let notify_sock = nng::Socket::new(nng::Protocol::Pub0)
             .map_err(|e| format!("创建 Pub0 socket 失败: {}", e))?;
-        notify_sock.listen(&notify_url)
+        notify_sock
+            .listen(&notify_url)
             .map_err(|e| format!("Pub0 listen 失败: {}", e))?;
 
         let write_sock = nng::Socket::new(nng::Protocol::Rep0)
             .map_err(|e| format!("创建 Rep0 (write) socket 失败: {}", e))?;
-        write_sock.listen(&write_url)
+        write_sock
+            .listen(&write_url)
             .map_err(|e| format!("Rep0 (write) listen 失败: {}", e))?;
 
         let query_sockets: Vec<nng::Socket> = (0..self.n_workers)
@@ -348,9 +399,19 @@ impl TurboQuantServer {
                 Ok(msg) => {
                     let req: Result<QueryRequest, _> = bincode::deserialize(msg.as_slice());
                     let resp = match req {
-                        Ok(QueryRequest::IVFSearch { query, k, nprobe, refine_factor }) => {
+                        Ok(QueryRequest::IVFSearch {
+                            query,
+                            k,
+                            nprobe,
+                            refine_factor,
+                        }) => {
                             let t0 = Instant::now();
-                            let results = engine.search_memory(&query, k as usize, nprobe as usize, refine_factor as usize);
+                            let results = engine.search_memory(
+                                &query,
+                                k as usize,
+                                nprobe as usize,
+                                refine_factor as usize,
+                            );
                             QueryResponse {
                                 results,
                                 latency_us: t0.elapsed().as_micros() as u64,
@@ -364,9 +425,19 @@ impl TurboQuantServer {
                                 latency_us: t0.elapsed().as_micros() as u64,
                             }
                         }
-                        Ok(QueryRequest::PersistedIVFSearch { query, k, nprobe, refine_factor }) => {
+                        Ok(QueryRequest::PersistedIVFSearch {
+                            query,
+                            k,
+                            nprobe,
+                            refine_factor,
+                        }) => {
                             let t0 = Instant::now();
-                            let results = engine.search_persisted(&query, k as usize, nprobe as usize, refine_factor as usize);
+                            let results = engine.search_persisted(
+                                &query,
+                                k as usize,
+                                nprobe as usize,
+                                refine_factor as usize,
+                            );
                             QueryResponse {
                                 results,
                                 latency_us: t0.elapsed().as_micros() as u64,
@@ -399,45 +470,53 @@ impl TurboQuantServer {
                             let inserted_ids = engine.insert(&vectors, n as usize);
                             WriteResponse::Inserted { ids: inserted_ids }
                         }
-                        Ok(WriteRequest::Delete { ids: _ }) => {
-                            WriteResponse::Deleted { count: 0 }
-                        }
-                        Ok(WriteRequest::BuildIVFIndex { nlist, index_type, quantization }) => {
+                        Ok(WriteRequest::Delete { ids: _ }) => WriteResponse::Deleted { count: 0 },
+                        Ok(WriteRequest::BuildIVFIndex {
+                            nlist,
+                            index_type,
+                            quantization,
+                        }) => {
                             match engine.build_ivf_index(nlist as usize, index_type, quantization) {
                                 Ok((nl, nt)) => {
-                                    let event = NotifyEvent::IndexBuilt { nlist: nl as u32, ntotal: nt as u32 };
+                                    let event = NotifyEvent::IndexBuilt {
+                                        nlist: nl as u32,
+                                        ntotal: nt as u32,
+                                    };
                                     if let Ok(event_bytes) = bincode::serialize(&event) {
                                         let mut notify_msg = nng::Message::new();
                                         notify_msg.push_back(&event_bytes);
                                         let _ = notify_sock.send(notify_msg);
                                     }
-                                    WriteResponse::IndexBuilt { nlist: nl as u32, ntotal: nt as u32 }
-                                }
-                                Err(e) => WriteResponse::Error { message: e },
-                            }
-                        }
-                        Ok(WriteRequest::PersistIndex { path }) => {
-                            match engine.persist(&path) {
-                                Ok(()) => {
-                                    let event = NotifyEvent::IndexPersisted { path: path.clone() };
-                                    if let Ok(event_bytes) = bincode::serialize(&event) {
-                                        let mut notify_msg = nng::Message::new();
-                                        notify_msg.push_back(&event_bytes);
-                                        let _ = notify_sock.send(notify_msg);
+                                    WriteResponse::IndexBuilt {
+                                        nlist: nl as u32,
+                                        ntotal: nt as u32,
                                     }
-                                    WriteResponse::IndexPersisted { path }
                                 }
                                 Err(e) => WriteResponse::Error { message: e },
                             }
                         }
-                        Ok(WriteRequest::LoadIndex { path }) => {
-                            match engine.load_index(&path) {
-                                Ok(ntotal) => WriteResponse::IndexLoaded { ntotal: ntotal as u32 },
-                                Err(e) => WriteResponse::Error { message: e },
+                        Ok(WriteRequest::PersistIndex { path }) => match engine.persist(&path) {
+                            Ok(()) => {
+                                let event = NotifyEvent::IndexPersisted { path: path.clone() };
+                                if let Ok(event_bytes) = bincode::serialize(&event) {
+                                    let mut notify_msg = nng::Message::new();
+                                    notify_msg.push_back(&event_bytes);
+                                    let _ = notify_sock.send(notify_msg);
+                                }
+                                WriteResponse::IndexPersisted { path }
                             }
-                        }
+                            Err(e) => WriteResponse::Error { message: e },
+                        },
+                        Ok(WriteRequest::LoadIndex { path }) => match engine.load_index(&path) {
+                            Ok(ntotal) => WriteResponse::IndexLoaded {
+                                ntotal: ntotal as u32,
+                            },
+                            Err(e) => WriteResponse::Error { message: e },
+                        },
                         Ok(WriteRequest::Flush) => WriteResponse::Flushed,
-                        Err(_) => WriteResponse::Error { message: "反序列化失败".to_string() },
+                        Err(_) => WriteResponse::Error {
+                            message: "反序列化失败".to_string(),
+                        },
                     };
 
                     if let Ok(resp_bytes) = bincode::serialize(&resp) {

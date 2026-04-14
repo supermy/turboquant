@@ -19,7 +19,7 @@ use rayon::prelude::*;
 use std::collections::BinaryHeap;
 
 use crate::kmeans::KMeans;
-use crate::rabitq::{RaBitQCodec, QueryFactorsData, compute_query_factors_into};
+use crate::rabitq::{compute_query_factors_into, QueryFactorsData, RaBitQCodec};
 use crate::sq8::SQ8Quantizer;
 use crate::utils::{prefetch_read, FloatOrd};
 
@@ -79,7 +79,13 @@ impl RaBitQIVFIndex {
     /// - `nb_bits`: 量化位数
     /// - `is_inner_product`: 是否为内积距离
     /// - `use_sq8`: 是否使用 SQ8 refinement
-    pub fn new(d: usize, nlist: usize, nb_bits: usize, is_inner_product: bool, use_sq8: bool) -> Self {
+    pub fn new(
+        d: usize,
+        nlist: usize,
+        nb_bits: usize,
+        is_inner_product: bool,
+        use_sq8: bool,
+    ) -> Self {
         let kmeans = KMeans::new(d, nlist, 20);
         let codecs: Vec<RaBitQCodec> = (0..nlist)
             .map(|_| RaBitQCodec::new(d, nb_bits, is_inner_product))
@@ -126,9 +132,8 @@ impl RaBitQIVFIndex {
 
         // 复制聚类中心
         for i in 0..self.nlist {
-            self.cluster_centroids[i].copy_from_slice(
-                &self.kmeans.centroids[i * self.d..(i + 1) * self.d],
-            );
+            self.cluster_centroids[i]
+                .copy_from_slice(&self.kmeans.centroids[i * self.d..(i + 1) * self.d]);
         }
 
         // 训练每个聚类的 SQ8
@@ -136,7 +141,9 @@ impl RaBitQIVFIndex {
         if use_sq8 {
             let mut cluster_data: Vec<Vec<f32>> = vec![Vec::new(); self.nlist];
             for i in 0..n {
-                let cluster_id = self.kmeans.assign_cluster(&data[i * self.d..(i + 1) * self.d]);
+                let cluster_id = self
+                    .kmeans
+                    .assign_cluster(&data[i * self.d..(i + 1) * self.d]);
                 cluster_data[cluster_id].extend_from_slice(&data[i * self.d..(i + 1) * self.d]);
             }
 
@@ -163,16 +170,26 @@ impl RaBitQIVFIndex {
             let pos_in_cluster = self.clusters[cluster_id].ids.len();
 
             let mut code = vec![0u8; code_sz];
-            self.codecs[cluster_id].encode(xi, Some(&self.cluster_centroids[cluster_id]), &mut code);
+            self.codecs[cluster_id].encode(
+                xi,
+                Some(&self.cluster_centroids[cluster_id]),
+                &mut code,
+            );
 
-            self.clusters[cluster_id].signs.extend_from_slice(&code[..signs_sz]);
-            self.clusters[cluster_id].factors.extend_from_slice(&code[signs_sz..signs_sz + 8]);
+            self.clusters[cluster_id]
+                .signs
+                .extend_from_slice(&code[..signs_sz]);
+            self.clusters[cluster_id]
+                .factors
+                .extend_from_slice(&code[signs_sz..signs_sz + 8]);
             self.clusters[cluster_id].codes.extend_from_slice(&code);
 
             if let Some(ref sq8) = self.sq8_quantizers[cluster_id] {
                 let mut sq8_code = vec![0u8; sq8.code_size()];
                 sq8.encode(xi, &mut sq8_code);
-                self.clusters[cluster_id].sq8_codes.extend_from_slice(&sq8_code);
+                self.clusters[cluster_id]
+                    .sq8_codes
+                    .extend_from_slice(&sq8_code);
             }
 
             let id = self.ntotal + i;
@@ -217,7 +234,8 @@ impl RaBitQIVFIndex {
             .map(|q| {
                 let query = &queries[q * self.d..(q + 1) * self.d];
                 let mut nearest_buf = Vec::with_capacity(nprobe);
-                self.kmeans.nearest_clusters_into(query, nprobe, &mut nearest_buf);
+                self.kmeans
+                    .nearest_clusters_into(query, nprobe, &mut nearest_buf);
 
                 let k1 = if use_sq8 {
                     (k * refine_factor).min(self.ntotal)
@@ -228,7 +246,8 @@ impl RaBitQIVFIndex {
                 let mut query_fac = QueryFactorsData::with_capacity(self.d);
 
                 if use_sq8 {
-                    let mut rabitq_heap: BinaryHeap<(FloatOrd, (usize, usize))> = BinaryHeap::with_capacity(k1);
+                    let mut rabitq_heap: BinaryHeap<(FloatOrd, (usize, usize))> =
+                        BinaryHeap::with_capacity(k1);
 
                     for (_, cluster_id) in &nearest_buf {
                         let cluster = &self.clusters[*cluster_id];
@@ -252,13 +271,19 @@ impl RaBitQIVFIndex {
                                 }
                             }
                             let signs = &cluster.signs[v * signs_sz..(v + 1) * signs_sz];
-                            let dot_qo = self.codecs[*cluster_id].compute_distance_signs_only(signs, &query_fac);
+                            let dot_qo = self.codecs[*cluster_id]
+                                .compute_distance_signs_only(signs, &query_fac);
 
                             let factors = &cluster.factors[v * 8..(v + 1) * 8];
-                            let or_minus_c_l2sqr = f32::from_le_bytes(factors[0..4].try_into().unwrap());
-                            let dp_multiplier = f32::from_le_bytes(factors[4..8].try_into().unwrap());
+                            let or_minus_c_l2sqr =
+                                f32::from_le_bytes(factors[0..4].try_into().unwrap());
+                            let dp_multiplier =
+                                f32::from_le_bytes(factors[4..8].try_into().unwrap());
                             let dist = self.codecs[*cluster_id].compute_distance_with_factors(
-                                dot_qo, or_minus_c_l2sqr, dp_multiplier, &query_fac,
+                                dot_qo,
+                                or_minus_c_l2sqr,
+                                dp_multiplier,
+                                &query_fac,
                             );
 
                             if rabitq_heap.len() < k1 {
@@ -275,11 +300,13 @@ impl RaBitQIVFIndex {
                         .map(|(FloatOrd(d), (cid, v))| (d, cid, v))
                         .collect();
 
-                    let mut final_heap: BinaryHeap<(FloatOrd, usize)> = BinaryHeap::with_capacity(k);
+                    let mut final_heap: BinaryHeap<(FloatOrd, usize)> =
+                        BinaryHeap::with_capacity(k);
                     for (_, cluster_id, v) in &rabitq_candidates {
                         if let Some(ref sq8) = self.sq8_quantizers[*cluster_id] {
                             let sq8_sz = sq8.code_size();
-                            let sq8_code = &self.clusters[*cluster_id].sq8_codes[*v * sq8_sz..(*v + 1) * sq8_sz];
+                            let sq8_code = &self.clusters[*cluster_id].sq8_codes
+                                [*v * sq8_sz..(*v + 1) * sq8_sz];
                             let refined_dist = sq8.compute_distance(sq8_code, query);
                             let id = self.clusters[*cluster_id].ids[*v] as usize;
 
@@ -323,13 +350,19 @@ impl RaBitQIVFIndex {
                                 }
                             }
                             let signs = &cluster.signs[v * signs_sz..(v + 1) * signs_sz];
-                            let dot_qo = self.codecs[*cluster_id].compute_distance_signs_only(signs, &query_fac);
+                            let dot_qo = self.codecs[*cluster_id]
+                                .compute_distance_signs_only(signs, &query_fac);
 
                             let factors = &cluster.factors[v * 8..(v + 1) * 8];
-                            let or_minus_c_l2sqr = f32::from_le_bytes(factors[0..4].try_into().unwrap());
-                            let dp_multiplier = f32::from_le_bytes(factors[4..8].try_into().unwrap());
+                            let or_minus_c_l2sqr =
+                                f32::from_le_bytes(factors[0..4].try_into().unwrap());
+                            let dp_multiplier =
+                                f32::from_le_bytes(factors[4..8].try_into().unwrap());
                             let dist = self.codecs[*cluster_id].compute_distance_with_factors(
-                                dot_qo, or_minus_c_l2sqr, dp_multiplier, &query_fac,
+                                dot_qo,
+                                or_minus_c_l2sqr,
+                                dp_multiplier,
+                                &query_fac,
                             );
 
                             if heap.len() < k1 {
@@ -341,10 +374,8 @@ impl RaBitQIVFIndex {
                         }
                     }
 
-                    let mut result: Vec<(usize, f32)> = heap
-                        .into_iter()
-                        .map(|(FloatOrd(d), i)| (i, d))
-                        .collect();
+                    let mut result: Vec<(usize, f32)> =
+                        heap.into_iter().map(|(FloatOrd(d), i)| (i, d)).collect();
                     result.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
                     result
                 }
@@ -461,16 +492,17 @@ impl TurboQuantIVFIndex {
         self.kmeans.train(data, n, 42);
 
         for i in 0..self.nlist {
-            self.cluster_centroids[i].copy_from_slice(
-                &self.kmeans.centroids[i * self.d..(i + 1) * self.d],
-            );
+            self.cluster_centroids[i]
+                .copy_from_slice(&self.kmeans.centroids[i * self.d..(i + 1) * self.d]);
         }
 
         let use_sq8 = self.sq8_quantizers[0].is_some();
         if use_sq8 {
             let mut cluster_data: Vec<Vec<f32>> = vec![Vec::new(); self.nlist];
             for i in 0..n {
-                let cluster_id = self.kmeans.assign_cluster(&data[i * self.d..(i + 1) * self.d]);
+                let cluster_id = self
+                    .kmeans
+                    .assign_cluster(&data[i * self.d..(i + 1) * self.d]);
                 cluster_data[cluster_id].extend_from_slice(&data[i * self.d..(i + 1) * self.d]);
             }
 
@@ -508,7 +540,9 @@ impl TurboQuantIVFIndex {
             if let Some(ref sq8) = self.sq8_quantizers[cluster_id] {
                 let mut sq8_code = vec![0u8; sq8.code_size()];
                 sq8.encode(xi, &mut sq8_code);
-                self.clusters[cluster_id].sq8_codes.extend_from_slice(&sq8_code);
+                self.clusters[cluster_id]
+                    .sq8_codes
+                    .extend_from_slice(&sq8_code);
             }
 
             let id = self.ntotal + i;
@@ -542,7 +576,8 @@ impl TurboQuantIVFIndex {
             .map(|q| {
                 let query = &queries[q * self.d..(q + 1) * self.d];
                 let mut nearest_buf = Vec::with_capacity(nprobe);
-                self.kmeans.nearest_clusters_into(query, nprobe, &mut nearest_buf);
+                self.kmeans
+                    .nearest_clusters_into(query, nprobe, &mut nearest_buf);
 
                 let k1 = if use_sq8 {
                     (k * refine_factor).min(self.ntotal)
@@ -555,7 +590,8 @@ impl TurboQuantIVFIndex {
                 crate::utils::l2_normalize(&mut q_normalized);
                 self.rotation.apply_into(&q_normalized, &mut query_rotated);
 
-                let mut heap: BinaryHeap<(FloatOrd, (usize, usize))> = BinaryHeap::with_capacity(k1);
+                let mut heap: BinaryHeap<(FloatOrd, (usize, usize))> =
+                    BinaryHeap::with_capacity(k1);
 
                 if use_split_lut {
                     let (lo_lut, hi_lut) = self.quantizer.build_split_lut(&query_rotated);
@@ -578,7 +614,10 @@ impl TurboQuantIVFIndex {
                             for j in 0..code_sz {
                                 let byte = code[j] as usize;
                                 dist += lo_lut[j][byte & 0xF] + hi_lut[j][byte >> 4];
-                                if j & 0xF == 0xF && heap.len() >= k1 && dist > heap.peek().unwrap().0 .0 {
+                                if j & 0xF == 0xF
+                                    && heap.len() >= k1
+                                    && dist > heap.peek().unwrap().0 .0
+                                {
                                     dist = f32::INFINITY;
                                     break;
                                 }
@@ -634,7 +673,8 @@ impl TurboQuantIVFIndex {
                 for (_, cluster_id, v) in &candidates {
                     if let Some(ref sq8) = self.sq8_quantizers[*cluster_id] {
                         let sq8_sz = sq8.code_size();
-                        let sq8_code = &self.clusters[*cluster_id].sq8_codes[*v * sq8_sz..(*v + 1) * sq8_sz];
+                        let sq8_code =
+                            &self.clusters[*cluster_id].sq8_codes[*v * sq8_sz..(*v + 1) * sq8_sz];
                         let refined_dist = sq8.compute_distance(sq8_code, query);
                         let id = self.clusters[*cluster_id].ids[*v] as usize;
 
@@ -691,7 +731,9 @@ impl TurboQuantIVFIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::{compute_recall, compute_ground_truth, generate_clustered_data, generate_queries};
+    use crate::utils::{
+        compute_ground_truth, compute_recall, generate_clustered_data, generate_queries,
+    };
 
     /// 测试 RaBitQ IVF + SQ8 召回率
     #[test]
@@ -711,7 +753,10 @@ mod tests {
         index.add(&data, nb);
 
         let results = index.search(&queries, nq, k, nlist.min(64), 10);
-        let result_ids: Vec<Vec<usize>> = results.iter().map(|r| r.iter().map(|&(i, _)| i).collect()).collect();
+        let result_ids: Vec<Vec<usize>> = results
+            .iter()
+            .map(|r| r.iter().map(|&(i, _)| i).collect())
+            .collect();
         let recall = compute_recall(&result_ids, &gt, nq, k);
 
         println!("RaBitQ IVF + SQ8 Recall@{}: {:.4}", k, recall);

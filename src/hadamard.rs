@@ -83,9 +83,15 @@ impl HadamardRotation {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(seed);
 
         // 生成 3 轮随机符号
-        let signs1: Vec<f32> = (0..d_out).map(|_| if rng.gen::<bool>() { 1.0 } else { -1.0 }).collect();
-        let signs2: Vec<f32> = (0..d_out).map(|_| if rng.gen::<bool>() { 1.0 } else { -1.0 }).collect();
-        let signs3: Vec<f32> = (0..d_out).map(|_| if rng.gen::<bool>() { 1.0 } else { -1.0 }).collect();
+        let signs1: Vec<f32> = (0..d_out)
+            .map(|_| if rng.gen::<bool>() { 1.0 } else { -1.0 })
+            .collect();
+        let signs2: Vec<f32> = (0..d_out)
+            .map(|_| if rng.gen::<bool>() { 1.0 } else { -1.0 })
+            .collect();
+        let signs3: Vec<f32> = (0..d_out)
+            .map(|_| if rng.gen::<bool>() { 1.0 } else { -1.0 })
+            .collect();
 
         // 缩放因子: 1 / (d * √d) = 1 / d^(3/2)
         // 这是因为 3 次 FWHT 后，每个元素是 d^(3/2) 个原始元素的线性组合

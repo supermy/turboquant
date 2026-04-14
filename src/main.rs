@@ -4,8 +4,10 @@
 
 use std::time::Instant;
 
+use ::turboquant::utils::{
+    compute_ground_truth, compute_recall, generate_clustered_data, generate_queries,
+};
 use ::turboquant::*;
-use ::turboquant::utils::{generate_clustered_data, generate_queries, compute_ground_truth, compute_recall};
 
 fn main() {
     println!("╔══════════════════════════════════════════════════════════════╗");
@@ -64,7 +66,10 @@ fn main() {
         let res = index.search(&queries, nq, k, 1);
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
 
-        let ids: Vec<Vec<usize>> = res.iter().map(|r| r.iter().map(|(i, _)| *i).collect()).collect();
+        let ids: Vec<Vec<usize>> = res
+            .iter()
+            .map(|r| r.iter().map(|(i, _)| *i).collect())
+            .collect();
         let recall = compute_recall(&ids, &gt, nq, k);
 
         results.push(BenchmarkResult {
@@ -88,7 +93,10 @@ fn main() {
         let res = index.search(&queries, nq, k, 1);
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
 
-        let ids: Vec<Vec<usize>> = res.iter().map(|r| r.iter().map(|(i, _)| *i).collect()).collect();
+        let ids: Vec<Vec<usize>> = res
+            .iter()
+            .map(|r| r.iter().map(|(i, _)| *i).collect())
+            .collect();
         let recall = compute_recall(&ids, &gt, nq, k);
 
         results.push(BenchmarkResult {
@@ -112,7 +120,10 @@ fn main() {
         let res = index.search(&queries, nq, k, 10);
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
 
-        let ids: Vec<Vec<usize>> = res.iter().map(|r| r.iter().map(|(i, _)| *i).collect()).collect();
+        let ids: Vec<Vec<usize>> = res
+            .iter()
+            .map(|r| r.iter().map(|(i, _)| *i).collect())
+            .collect();
         let recall = compute_recall(&ids, &gt, nq, k);
 
         results.push(BenchmarkResult {
@@ -136,7 +147,10 @@ fn main() {
         let res = index.search(&queries, nq, k, 1);
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
 
-        let ids: Vec<Vec<usize>> = res.iter().map(|r| r.iter().map(|(i, _)| *i).collect()).collect();
+        let ids: Vec<Vec<usize>> = res
+            .iter()
+            .map(|r| r.iter().map(|(i, _)| *i).collect())
+            .collect();
         let recall = compute_recall(&ids, &gt, nq, k);
 
         results.push(BenchmarkResult {
@@ -160,7 +174,10 @@ fn main() {
         let res = index.search(&queries, nq, k, 10);
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
 
-        let ids: Vec<Vec<usize>> = res.iter().map(|r| r.iter().map(|(i, _)| *i).collect()).collect();
+        let ids: Vec<Vec<usize>> = res
+            .iter()
+            .map(|r| r.iter().map(|(i, _)| *i).collect())
+            .collect();
         let recall = compute_recall(&ids, &gt, nq, k);
 
         results.push(BenchmarkResult {
@@ -184,7 +201,10 @@ fn main() {
         let res = index.search(&queries, nq, k, 64, 10);
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
 
-        let ids: Vec<Vec<usize>> = res.iter().map(|r| r.iter().map(|(i, _)| *i).collect()).collect();
+        let ids: Vec<Vec<usize>> = res
+            .iter()
+            .map(|r| r.iter().map(|(i, _)| *i).collect())
+            .collect();
         let recall = compute_recall(&ids, &gt, nq, k);
 
         results.push(BenchmarkResult {
@@ -202,16 +222,27 @@ fn main() {
     println!("综合对比结果");
     println!("========================================");
 
-    println!("\n{:<22} | {:>6} | {:>10} | {:>8} | {:>6} | {:>6}",
-             "方法", "码大小", "总存储(KB)", "Recall@10", "搜索ms", "训练");
-    println!("{}-+-{}-+-{}-+-{}-+-{}-+-{}",
-             "-".repeat(22), "-".repeat(6), "-".repeat(10), "-".repeat(8), "-".repeat(6), "-".repeat(6));
+    println!(
+        "\n{:<22} | {:>6} | {:>10} | {:>8} | {:>6} | {:>6}",
+        "方法", "码大小", "总存储(KB)", "Recall@10", "搜索ms", "训练"
+    );
+    println!(
+        "{}-+-{}-+-{}-+-{}-+-{}-+-{}",
+        "-".repeat(22),
+        "-".repeat(6),
+        "-".repeat(10),
+        "-".repeat(8),
+        "-".repeat(6),
+        "-".repeat(6)
+    );
 
     for r in &results {
         let storage_kb = r.total_storage as f64 / 1024.0;
         let training = if r.needs_training { "是" } else { "否" };
-        println!("{:<22} | {:>4}B  | {:>8.1}  | {:>7.4} | {:>5.0}ms | {:>4}",
-                 r.name, r.code_size, storage_kb, r.recall, r.search_ms as i64, training);
+        println!(
+            "{:<22} | {:>4}B  | {:>8.1}  | {:>7.4} | {:>5.0}ms | {:>4}",
+            r.name, r.code_size, storage_kb, r.recall, r.search_ms as i64, training
+        );
     }
 
     // 性价比评分
@@ -223,11 +254,17 @@ fn main() {
     for r in &results {
         let compression_ratio = fp32_storage as f64 / r.total_storage as f64;
         let storage_score = r.recall as f64 * compression_ratio;
-        let speed_score = if r.search_ms > 0.0 { 1000.0 / r.search_ms } else { 1000.0 };
+        let speed_score = if r.search_ms > 0.0 {
+            1000.0 / r.search_ms
+        } else {
+            1000.0
+        };
         let cost_benefit = storage_score * speed_score * r.recall as f64 * 100.0;
 
-        println!("{:<22} | 压缩比: {:>5.1}x | 性价比: {:>8.2}",
-                 r.name, compression_ratio, cost_benefit);
+        println!(
+            "{:<22} | 压缩比: {:>5.1}x | 性价比: {:>8.2}",
+            r.name, compression_ratio, cost_benefit
+        );
     }
 
     // 场景推荐

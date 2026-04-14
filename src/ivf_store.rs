@@ -26,8 +26,8 @@ use std::collections::BinaryHeap;
 use std::path::Path;
 
 use rocksdb::{
-    BlockBasedIndexType, BlockBasedOptions, CuckooTableOptions, Direction, IteratorMode,
-    Options, ReadOptions, SliceTransform, WriteBatch, DB,
+    BlockBasedIndexType, BlockBasedOptions, CuckooTableOptions, Direction, IteratorMode, Options,
+    ReadOptions, SliceTransform, WriteBatch, DB,
 };
 use rocksdb::{ColumnFamily, ColumnFamilyDescriptor};
 
@@ -179,15 +179,19 @@ impl RocksDBIVFIndex {
                         .collect();
 
                     if meta.use_sq8 {
-                        index.sq8_quantizers = (0..meta.nlist).map(|c| {
-                            let mut sq8 = SQ8Quantizer::new(meta.d);
-                            if c < meta.ivf_sq8_vmin.len() && c < meta.ivf_sq8_vmax.len() {
-                                sq8.vmin = meta.ivf_sq8_vmin[c].clone();
-                                sq8.vmax = meta.ivf_sq8_vmax[c].clone();
-                                sq8.scale = (0..meta.d).map(|j| (sq8.vmax[j] - sq8.vmin[j]) / 255.0).collect();
-                            }
-                            Some(sq8)
-                        }).collect();
+                        index.sq8_quantizers = (0..meta.nlist)
+                            .map(|c| {
+                                let mut sq8 = SQ8Quantizer::new(meta.d);
+                                if c < meta.ivf_sq8_vmin.len() && c < meta.ivf_sq8_vmax.len() {
+                                    sq8.vmin = meta.ivf_sq8_vmin[c].clone();
+                                    sq8.vmax = meta.ivf_sq8_vmax[c].clone();
+                                    sq8.scale = (0..meta.d)
+                                        .map(|j| (sq8.vmax[j] - sq8.vmin[j]) / 255.0)
+                                        .collect();
+                                }
+                                Some(sq8)
+                            })
+                            .collect();
                     }
 
                     let mut cluster_counts = vec![0usize; meta.nlist];
@@ -230,18 +234,18 @@ impl RocksDBIVFIndex {
 
         self.centroids = index.kmeans.centroids.clone();
         self.codecs = index.codecs.clone();
-        self.sq8_quantizers = index
-            .sq8_quantizers
-            .iter()
-            .map(|opt| opt.clone())
-            .collect();
+        self.sq8_quantizers = index.sq8_quantizers.iter().map(|opt| opt.clone()).collect();
         self.cluster_counts = index.clusters.iter().map(|c| c.ids.len()).collect();
         let mut offset = 0usize;
-        self.cluster_offsets = index.clusters.iter().map(|c| {
-            let o = offset;
-            offset += c.ids.len();
-            o
-        }).collect();
+        self.cluster_offsets = index
+            .clusters
+            .iter()
+            .map(|c| {
+                let o = offset;
+                offset += c.ids.len();
+                o
+            })
+            .collect();
 
         let signs_sz = index.codecs[0].signs_size();
         let code_sz = index.codecs[0].code_size();
@@ -261,8 +265,8 @@ impl RocksDBIVFIndex {
                 count: n_vectors as u32,
                 start_local_id: 0,
             };
-            let meta_bytes = bincode::serialize(&meta)
-                .map_err(|e| format!("序列化ClusterMeta失败: {}", e))?;
+            let meta_bytes =
+                bincode::serialize(&meta).map_err(|e| format!("序列化ClusterMeta失败: {}", e))?;
             let meta_key = (c as u16).to_le_bytes();
             batch.put_cf(cf_cluster_meta, &meta_key[..], &meta_bytes);
 
@@ -283,8 +287,8 @@ impl RocksDBIVFIndex {
 
             let centroid_key = format!("c{}", c);
             let centroid_val = &index.cluster_centroids[c];
-            let encoded = bincode::serialize(centroid_val)
-                .map_err(|e| format!("序列化质心失败: {}", e))?;
+            let encoded =
+                bincode::serialize(centroid_val).map_err(|e| format!("序列化质心失败: {}", e))?;
             batch.put_cf(cf_centroids, centroid_key.as_bytes(), &encoded);
         }
 
@@ -323,8 +327,8 @@ impl RocksDBIVFIndex {
             },
             storage_version: 2,
         };
-        let meta_bytes = bincode::serialize(&index_meta)
-            .map_err(|e| format!("序列化元数据失败: {}", e))?;
+        let meta_bytes =
+            bincode::serialize(&index_meta).map_err(|e| format!("序列化元数据失败: {}", e))?;
         batch.put(b"meta", &meta_bytes);
 
         self.db
@@ -383,15 +387,18 @@ impl RocksDBIVFIndex {
             read_opts.set_iterate_lower_bound(&start);
             read_opts.set_iterate_upper_bound(&end);
 
-            let iter = self
-                .db
-                .iterator_cf_opt(cf_signs, read_opts, IteratorMode::From(&start, Direction::Forward));
+            let iter = self.db.iterator_cf_opt(
+                cf_signs,
+                read_opts,
+                IteratorMode::From(&start, Direction::Forward),
+            );
 
             let mut local_id: usize = 0;
             for item in iter {
                 if let Ok((_key, signs_val)) = item {
                     let global_id = self.decode_global_id(*cluster_id, local_id);
-                    let dot_qo = self.codecs[*cluster_id].compute_distance_signs_only(&signs_val, &query_fac);
+                    let dot_qo = self.codecs[*cluster_id]
+                        .compute_distance_signs_only(&signs_val, &query_fac);
 
                     if heap.len() < k1 {
                         heap.push((FloatOrd(dot_qo), global_id));
@@ -404,7 +411,8 @@ impl RocksDBIVFIndex {
             }
         }
 
-        let candidates: Vec<(f32, usize)> = heap.into_iter().map(|(FloatOrd(d), i)| (d, i)).collect();
+        let candidates: Vec<(f32, usize)> =
+            heap.into_iter().map(|(FloatOrd(d), i)| (d, i)).collect();
 
         let cf_factors = match self.cf(CF_RABITQ_FACTORS) {
             Ok(cf) => cf,
@@ -425,10 +433,15 @@ impl RocksDBIVFIndex {
                 let local_id = *idx - self.cluster_offset(cid);
                 let key = Self::cluster_key(cid as u16, local_id as u32);
                 if let Ok(Some(factors_val)) = self.db.get_pinned_cf(cf_factors, &key) {
-                    let or_minus_c_l2sqr = f32::from_le_bytes(factors_val[..4].try_into().unwrap_or([0u8; 4]));
-                    let dp_multiplier = f32::from_le_bytes(factors_val[4..8].try_into().unwrap_or([0u8; 4]));
+                    let or_minus_c_l2sqr =
+                        f32::from_le_bytes(factors_val[..4].try_into().unwrap_or([0u8; 4]));
+                    let dp_multiplier =
+                        f32::from_le_bytes(factors_val[4..8].try_into().unwrap_or([0u8; 4]));
                     let dist = self.codecs[cid].compute_distance_with_factors(
-                        *dot_qo, or_minus_c_l2sqr, dp_multiplier, &query_fac,
+                        *dot_qo,
+                        or_minus_c_l2sqr,
+                        dp_multiplier,
+                        &query_fac,
                     );
 
                     if !self.use_sq8 {
@@ -672,20 +685,26 @@ impl RocksDBTQIVFIndex {
                     index.nbits = meta.nbits;
                     index.use_sq8 = meta.use_sq8;
                     index.ntotal = meta.ntotal;
-                    index.quantizer = crate::lloyd_max::LloydMaxQuantizer::new(d_rotated, meta.nbits);
-                    index.rotation = crate::hadamard::HadamardRotation::new(meta.d, meta.hadamard_seed);
+                    index.quantizer =
+                        crate::lloyd_max::LloydMaxQuantizer::new(d_rotated, meta.nbits);
+                    index.rotation =
+                        crate::hadamard::HadamardRotation::new(meta.d, meta.hadamard_seed);
                     index.centroids = meta.ivf_centroids;
 
                     if meta.use_sq8 {
-                        index.sq8_quantizers = (0..meta.nlist).map(|c| {
-                            let mut sq8 = SQ8Quantizer::new(meta.d);
-                            if c < meta.ivf_sq8_vmin.len() && c < meta.ivf_sq8_vmax.len() {
-                                sq8.vmin = meta.ivf_sq8_vmin[c].clone();
-                                sq8.vmax = meta.ivf_sq8_vmax[c].clone();
-                                sq8.scale = (0..meta.d).map(|j| (sq8.vmax[j] - sq8.vmin[j]) / 255.0).collect();
-                            }
-                            Some(sq8)
-                        }).collect();
+                        index.sq8_quantizers = (0..meta.nlist)
+                            .map(|c| {
+                                let mut sq8 = SQ8Quantizer::new(meta.d);
+                                if c < meta.ivf_sq8_vmin.len() && c < meta.ivf_sq8_vmax.len() {
+                                    sq8.vmin = meta.ivf_sq8_vmin[c].clone();
+                                    sq8.vmax = meta.ivf_sq8_vmax[c].clone();
+                                    sq8.scale = (0..meta.d)
+                                        .map(|j| (sq8.vmax[j] - sq8.vmin[j]) / 255.0)
+                                        .collect();
+                                }
+                                Some(sq8)
+                            })
+                            .collect();
                     }
 
                     let mut cluster_counts = vec![0usize; meta.nlist];
@@ -727,18 +746,18 @@ impl RocksDBTQIVFIndex {
         self.centroids = index.cluster_centroids.iter().flatten().copied().collect();
         self.quantizer = index.quantizer.clone();
         self.rotation = index.rotation.clone();
-        self.sq8_quantizers = index
-            .sq8_quantizers
-            .iter()
-            .map(|opt| opt.clone())
-            .collect();
+        self.sq8_quantizers = index.sq8_quantizers.iter().map(|opt| opt.clone()).collect();
         self.cluster_counts = index.clusters.iter().map(|c| c.ids.len()).collect();
         let mut offset = 0usize;
-        self.cluster_offsets = index.clusters.iter().map(|c| {
-            let o = offset;
-            offset += c.ids.len();
-            o
-        }).collect();
+        self.cluster_offsets = index
+            .clusters
+            .iter()
+            .map(|c| {
+                let o = offset;
+                offset += c.ids.len();
+                o
+            })
+            .collect();
 
         let code_sz = self.quantizer.code_size();
         let mut batch = WriteBatch::default();
@@ -756,8 +775,8 @@ impl RocksDBTQIVFIndex {
                 count: n_vectors as u32,
                 start_local_id: 0,
             };
-            let meta_bytes = bincode::serialize(&meta)
-                .map_err(|e| format!("序列化ClusterMeta失败: {}", e))?;
+            let meta_bytes =
+                bincode::serialize(&meta).map_err(|e| format!("序列化ClusterMeta失败: {}", e))?;
             let meta_key = (c as u16).to_le_bytes();
             batch.put_cf(cf_cluster_meta, &meta_key[..], &meta_bytes);
 
@@ -776,8 +795,8 @@ impl RocksDBTQIVFIndex {
 
             let centroid_key = format!("c{}", c);
             let centroid_val = &index.cluster_centroids[c];
-            let encoded = bincode::serialize(centroid_val)
-                .map_err(|e| format!("序列化质心失败: {}", e))?;
+            let encoded =
+                bincode::serialize(centroid_val).map_err(|e| format!("序列化质心失败: {}", e))?;
             batch.put_cf(cf_centroids, centroid_key.as_bytes(), &encoded);
         }
 
@@ -816,8 +835,8 @@ impl RocksDBTQIVFIndex {
             },
             storage_version: 3,
         };
-        let meta_bytes = bincode::serialize(&index_meta)
-            .map_err(|e| format!("序列化元数据失败: {}", e))?;
+        let meta_bytes =
+            bincode::serialize(&index_meta).map_err(|e| format!("序列化元数据失败: {}", e))?;
         batch.put(b"meta", &meta_bytes);
 
         self.db
@@ -855,7 +874,8 @@ impl RocksDBTQIVFIndex {
         let mut query_normalized = query.to_vec();
         crate::utils::l2_normalize(&mut query_normalized);
         let mut query_rotated = vec![0.0f32; self.rotation.d_out];
-        self.rotation.apply_into(&query_normalized, &mut query_rotated);
+        self.rotation
+            .apply_into(&query_normalized, &mut query_rotated);
 
         let (lo_lut, hi_lut) = self.quantizer.build_split_lut(&query_rotated);
         let code_sz = self.quantizer.code_size();
@@ -872,9 +892,11 @@ impl RocksDBTQIVFIndex {
             read_opts.set_iterate_lower_bound(&start);
             read_opts.set_iterate_upper_bound(&end);
 
-            let iter = self
-                .db
-                .iterator_cf_opt(cf_codes, read_opts, IteratorMode::From(&start, Direction::Forward));
+            let iter = self.db.iterator_cf_opt(
+                cf_codes,
+                read_opts,
+                IteratorMode::From(&start, Direction::Forward),
+            );
 
             let mut local_id: usize = 0;
             for item in iter {
@@ -905,15 +927,14 @@ impl RocksDBTQIVFIndex {
         }
 
         if !self.use_sq8 {
-            let mut result: Vec<(usize, f32)> = heap
-                .into_iter()
-                .map(|(FloatOrd(d), i)| (i, d))
-                .collect();
+            let mut result: Vec<(usize, f32)> =
+                heap.into_iter().map(|(FloatOrd(d), i)| (i, d)).collect();
             result.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
             return result;
         }
 
-        let candidates: Vec<(f32, usize)> = heap.into_iter().map(|(FloatOrd(d), i)| (d, i)).collect();
+        let candidates: Vec<(f32, usize)> =
+            heap.into_iter().map(|(FloatOrd(d), i)| (d, i)).collect();
 
         let cf_sq8 = match self.cf(CF_TQ_SQ8) {
             Ok(cf) => cf,

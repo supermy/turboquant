@@ -162,10 +162,18 @@ impl RaBitQCodec {
         // 计算符号因子
         let sqrt_norm_l2 = norm_l2sqr.sqrt();
         let inv_d_sqrt = 1.0 / (self.d as f32).sqrt();
-        let inv_norm_l2 = if norm_l2sqr < 1e-10 { 1.0 } else { 1.0 / sqrt_norm_l2 };
+        let inv_norm_l2 = if norm_l2sqr < 1e-10 {
+            1.0
+        } else {
+            1.0 / sqrt_norm_l2
+        };
 
         let normalized_dp = dp_oo * inv_norm_l2 * inv_d_sqrt;
-        let inv_dp_oo = if normalized_dp.abs() < 1e-10 { 1.0 } else { 1.0 / normalized_dp };
+        let inv_dp_oo = if normalized_dp.abs() < 1e-10 {
+            1.0
+        } else {
+            1.0 / normalized_dp
+        };
 
         let factors = SignBitFactors {
             or_minus_c_l2sqr: if self.is_inner_product {
@@ -193,18 +201,12 @@ impl RaBitQCodec {
     ///
     /// # 返回值
     /// 估计的 L2 距离平方
-    pub fn compute_distance(
-        &self,
-        code: &[u8],
-        query_fac: &QueryFactorsData,
-    ) -> f32 {
+    pub fn compute_distance(&self, code: &[u8], query_fac: &QueryFactorsData) -> f32 {
         let base_size = (self.d + 7) / 8;
-        let or_minus_c_l2sqr = f32::from_le_bytes(
-            code[base_size..base_size + 4].try_into().unwrap(),
-        );
-        let dp_multiplier = f32::from_le_bytes(
-            code[base_size + 4..base_size + 8].try_into().unwrap(),
-        );
+        let or_minus_c_l2sqr =
+            f32::from_le_bytes(code[base_size..base_size + 4].try_into().unwrap());
+        let dp_multiplier =
+            f32::from_le_bytes(code[base_size + 4..base_size + 8].try_into().unwrap());
 
         let mut dot_qo = 0.0f32;
         if !query_fac.lookup.is_empty() {
@@ -222,8 +224,7 @@ impl RaBitQCodec {
 
         let final_dot = query_fac.c1 * dot_qo - query_fac.c34;
 
-        let dist = or_minus_c_l2sqr + query_fac.qr_to_c_l2sqr
-            - 2.0 * dp_multiplier * final_dot;
+        let dist = or_minus_c_l2sqr + query_fac.qr_to_c_l2sqr - 2.0 * dp_multiplier * final_dot;
 
         if self.is_inner_product {
             -0.5 * (dist - query_fac.qr_to_c_l2sqr)
@@ -236,11 +237,7 @@ impl RaBitQCodec {
     ///
     /// 当 signs 和 factors 分开存储时，先读 signs 做粗排，
     /// 只对候选向量读取 factors 做精确距离估计。
-    pub fn compute_distance_signs_only(
-        &self,
-        signs: &[u8],
-        query_fac: &QueryFactorsData,
-    ) -> f32 {
+    pub fn compute_distance_signs_only(&self, signs: &[u8], query_fac: &QueryFactorsData) -> f32 {
         let base_size = (self.d + 7) / 8;
         let mut dot_qo = 0.0f32;
         if !query_fac.lookup.is_empty() {
@@ -267,8 +264,7 @@ impl RaBitQCodec {
         query_fac: &QueryFactorsData,
     ) -> f32 {
         let final_dot = query_fac.c1 * dot_qo - query_fac.c34;
-        let dist = or_minus_c_l2sqr + query_fac.qr_to_c_l2sqr
-            - 2.0 * dp_multiplier * final_dot;
+        let dist = or_minus_c_l2sqr + query_fac.qr_to_c_l2sqr - 2.0 * dp_multiplier * final_dot;
 
         if self.is_inner_product {
             -0.5 * (dist - query_fac.qr_to_c_l2sqr)
@@ -287,10 +283,14 @@ impl RaBitQCodec {
     pub fn extract_factors(&self, code: &[u8]) -> (f32, f32) {
         let base_size = self.factors_offset();
         let or_minus_c_l2sqr = f32::from_le_bytes(
-            code[base_size..base_size + 4].try_into().unwrap_or([0u8; 4]),
+            code[base_size..base_size + 4]
+                .try_into()
+                .unwrap_or([0u8; 4]),
         );
         let dp_multiplier = f32::from_le_bytes(
-            code[base_size + 4..base_size + 8].try_into().unwrap_or([0u8; 4]),
+            code[base_size + 4..base_size + 8]
+                .try_into()
+                .unwrap_or([0u8; 4]),
         );
         (or_minus_c_l2sqr, dp_multiplier)
     }
@@ -427,7 +427,11 @@ impl RaBitQFlatIndex {
     /// 创建新的 RaBitQ Flat 索引
     pub fn new(d: usize, nb_bits: usize, is_inner_product: bool, use_sq8: bool) -> Self {
         let codec = RaBitQCodec::new(d, nb_bits, is_inner_product);
-        let sq8 = if use_sq8 { Some(SQ8Quantizer::new(d)) } else { None };
+        let sq8 = if use_sq8 {
+            Some(SQ8Quantizer::new(d))
+        } else {
+            None
+        };
 
         Self {
             d,
@@ -477,12 +481,19 @@ impl RaBitQFlatIndex {
             let xi = &data[i * self.d..(i + 1) * self.d];
 
             // RaBitQ 编码
-            self.codec.encode(xi, Some(&self.centroid), &mut self.codes[(self.ntotal + i) * code_sz..(self.ntotal + i + 1) * code_sz]);
+            self.codec.encode(
+                xi,
+                Some(&self.centroid),
+                &mut self.codes[(self.ntotal + i) * code_sz..(self.ntotal + i + 1) * code_sz],
+            );
 
             // SQ8 编码
             if let Some(ref sq8) = self.sq8 {
                 let sq8_sz = sq8.code_size();
-                sq8.encode(xi, &mut self.sq8_codes[(self.ntotal + i) * sq8_sz..(self.ntotal + i + 1) * sq8_sz]);
+                sq8.encode(
+                    xi,
+                    &mut self.sq8_codes[(self.ntotal + i) * sq8_sz..(self.ntotal + i + 1) * sq8_sz],
+                );
             }
         }
 
@@ -494,7 +505,13 @@ impl RaBitQFlatIndex {
     /// 两阶段搜索:
     /// 1. 粗排: RaBitQ 距离估计
     /// 2. 精排: SQ8 距离计算 (可选)
-    pub fn search(&self, queries: &[f32], n: usize, k: usize, refine_factor: usize) -> Vec<Vec<(usize, f32)>> {
+    pub fn search(
+        &self,
+        queries: &[f32],
+        n: usize,
+        k: usize,
+        refine_factor: usize,
+    ) -> Vec<Vec<(usize, f32)>> {
         let code_sz = self.codec.code_size();
 
         let results: Vec<Vec<(usize, f32)>> = (0..n)
@@ -529,7 +546,8 @@ impl RaBitQFlatIndex {
                     }
                 }
 
-                let candidates: Vec<(f32, usize)> = heap.into_iter().map(|(FloatOrd(d), i)| (d, i)).collect();
+                let candidates: Vec<(f32, usize)> =
+                    heap.into_iter().map(|(FloatOrd(d), i)| (d, i)).collect();
 
                 let mut final_heap: BinaryHeap<(FloatOrd, usize)> = BinaryHeap::with_capacity(k);
 
@@ -583,7 +601,9 @@ impl RaBitQFlatIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::{compute_recall, compute_ground_truth, generate_clustered_data, generate_queries};
+    use crate::utils::{
+        compute_ground_truth, compute_recall, generate_clustered_data, generate_queries,
+    };
 
     /// 测试 RaBitQ Flat 1-bit 召回率
     #[test]
@@ -602,7 +622,10 @@ mod tests {
         index.add(&data, nb);
 
         let results = index.search(&queries, nq, k, 1);
-        let result_ids: Vec<Vec<usize>> = results.iter().map(|r| r.iter().map(|&(i, _)| i).collect()).collect();
+        let result_ids: Vec<Vec<usize>> = results
+            .iter()
+            .map(|r| r.iter().map(|&(i, _)| i).collect())
+            .collect();
         let recall = compute_recall(&result_ids, &gt, nq, k);
 
         println!("RaBitQ Flat 1-bit Recall@{}: {:.4}", k, recall);
@@ -625,10 +648,17 @@ mod tests {
         index.add(&data, nb);
 
         let results = index.search(&queries, nq, k, 10);
-        let result_ids: Vec<Vec<usize>> = results.iter().map(|r| r.iter().map(|&(i, _)| i).collect()).collect();
+        let result_ids: Vec<Vec<usize>> = results
+            .iter()
+            .map(|r| r.iter().map(|&(i, _)| i).collect())
+            .collect();
         let recall = compute_recall(&result_ids, &gt, nq, k);
 
         println!("RaBitQ Flat 1-bit + SQ8 Recall@{}: {:.4}", k, recall);
-        assert!(recall > 0.85, "RaBitQ Flat + SQ8 recall too low: {}", recall);
+        assert!(
+            recall > 0.85,
+            "RaBitQ Flat + SQ8 recall too low: {}",
+            recall
+        );
     }
 }

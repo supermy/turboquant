@@ -3,13 +3,15 @@
 use std::path::Path;
 use std::time::Instant;
 
-use ::turboquant::*;
 use ::turboquant::store::VectorStore;
+use ::turboquant::*;
 
 fn compute_recall_test(result: &[usize], gt: &[usize], k: usize) -> f32 {
     let mut hits = 0;
     for i in 0..k {
-        if result.contains(&gt[i]) { hits += 1; }
+        if result.contains(&gt[i]) {
+            hits += 1;
+        }
     }
     hits as f32 / k as f32
 }
@@ -95,7 +97,11 @@ fn test_persistence_qps_benchmark() {
         let storage_bytes = stats.code_count * index.code_size() + stats.sq8_count * d;
 
         println!("  内存插入: {:.0} QPS ({:.1}ms)", insert_qps, insert_ms);
-        println!("  内存查询: {:.0} QPS ({:.2}ms/query)", search_qps, search_ms / nq as f64);
+        println!(
+            "  内存查询: {:.0} QPS ({:.2}ms/query)",
+            search_qps,
+            search_ms / nq as f64
+        );
         println!("  持久化:   {:.1}ms", save_ms);
         println!("  加载:     {:.1}ms", load_ms);
         println!("  加载后查: {:.0} QPS", search2_qps);
@@ -157,7 +163,11 @@ fn test_persistence_qps_benchmark() {
         let storage_bytes = stats.code_count * index.code_size() + stats.sq8_count * d;
 
         println!("  内存插入: {:.0} QPS ({:.1}ms)", insert_qps, insert_ms);
-        println!("  内存查询: {:.0} QPS ({:.2}ms/query)", search_qps, search_ms / nq as f64);
+        println!(
+            "  内存查询: {:.0} QPS ({:.2}ms/query)",
+            search_qps,
+            search_ms / nq as f64
+        );
         println!("  持久化:   {:.1}ms", save_ms);
         println!("  加载:     {:.1}ms", load_ms);
         println!("  加载后查: {:.0} QPS", search2_qps);
@@ -220,7 +230,11 @@ fn test_persistence_qps_benchmark() {
         let storage_bytes = stats.code_count * index.code_size() + stats.sq8_count * d;
 
         println!("  内存插入: {:.0} QPS ({:.1}ms)", insert_qps, insert_ms);
-        println!("  内存查询: {:.0} QPS ({:.2}ms/query)", search_qps, search_ms / nq as f64);
+        println!(
+            "  内存查询: {:.0} QPS ({:.2}ms/query)",
+            search_qps,
+            search_ms / nq as f64
+        );
         println!("  持久化:   {:.1}ms", save_ms);
         println!("  加载:     {:.1}ms", load_ms);
         println!("  加载后查: {:.0} QPS", search2_qps);
@@ -243,27 +257,55 @@ fn test_persistence_qps_benchmark() {
     println!("性能汇总");
     println!("{}", "=".repeat(80));
 
-    println!("\n{:<22} | {:>10} | {:>10} | {:>10} | {:>8} | {:>8} | {:>10}",
-             "方法", "插入QPS", "查询QPS", "延迟(ms)", "保存(ms)", "加载(ms)", "存储(KB)");
+    println!(
+        "\n{:<22} | {:>10} | {:>10} | {:>10} | {:>8} | {:>8} | {:>10}",
+        "方法", "插入QPS", "查询QPS", "延迟(ms)", "保存(ms)", "加载(ms)", "存储(KB)"
+    );
     println!("{}", "-".repeat(90));
 
     for r in &results {
-        println!("{:<22} | {:>10.0} | {:>10.0} | {:>10.2} | {:>8.1} | {:>8.1} | {:>10.1}",
-                 r.name, r.insert_qps, r.search_qps, r.latency_ms,
-                 r.save_time_ms, r.load_time_ms, r.storage_bytes as f64 / 1024.0);
+        println!(
+            "{:<22} | {:>10.0} | {:>10.0} | {:>10.2} | {:>8.1} | {:>8.1} | {:>10.1}",
+            r.name,
+            r.insert_qps,
+            r.search_qps,
+            r.latency_ms,
+            r.save_time_ms,
+            r.load_time_ms,
+            r.storage_bytes as f64 / 1024.0
+        );
     }
 
     println!("\n{}", "=".repeat(80));
     println!("关键发现");
     println!("{}", "=".repeat(80));
 
-    let best_insert = results.iter().max_by(|a, b| a.insert_qps.partial_cmp(&b.insert_qps).unwrap()).unwrap();
-    let best_search = results.iter().max_by(|a, b| a.search_qps.partial_cmp(&b.search_qps).unwrap()).unwrap();
-    let best_recall = results.iter().max_by(|a, b| a.recall.partial_cmp(&b.recall).unwrap()).unwrap();
+    let best_insert = results
+        .iter()
+        .max_by(|a, b| a.insert_qps.partial_cmp(&b.insert_qps).unwrap())
+        .unwrap();
+    let best_search = results
+        .iter()
+        .max_by(|a, b| a.search_qps.partial_cmp(&b.search_qps).unwrap())
+        .unwrap();
+    let best_recall = results
+        .iter()
+        .max_by(|a, b| a.recall.partial_cmp(&b.recall).unwrap())
+        .unwrap();
 
-    println!("- 最高插入速度: {} ({:.0} QPS)", best_insert.name, best_insert.insert_qps);
-    println!("- 最高查询速度: {} ({:.0} QPS)", best_search.name, best_search.search_qps);
-    println!("- 最高召回率:   {} ({:.1}%)", best_recall.name, best_recall.recall * 100.0);
+    println!(
+        "- 最高插入速度: {} ({:.0} QPS)",
+        best_insert.name, best_insert.insert_qps
+    );
+    println!(
+        "- 最高查询速度: {} ({:.0} QPS)",
+        best_search.name, best_search.search_qps
+    );
+    println!(
+        "- 最高召回率:   {} ({:.1}%)",
+        best_recall.name,
+        best_recall.recall * 100.0
+    );
 }
 
 #[test]
@@ -299,7 +341,9 @@ fn test_incremental_insert_qps() {
             sq8.encode(xi, &mut sq8_code);
         }
 
-        store.insert_turboquant_vector(i as u64, &code, Some(&sq8_code)).unwrap();
+        store
+            .insert_turboquant_vector(i as u64, &code, Some(&sq8_code))
+            .unwrap();
     }
     let insert_ms = t0.elapsed().as_secs_f64() * 1000.0;
     let insert_qps = nb as f64 / (insert_ms / 1000.0);

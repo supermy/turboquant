@@ -1,11 +1,11 @@
 use std::path::Path;
 use std::time::Instant;
 
-use turboquant::sift::SiftSmallDataset;
-use turboquant::store::VectorStore;
-use turboquant::rabitq;
 use turboquant::ivf;
 use turboquant::ivf::TurboQuantIVFIndex;
+use turboquant::rabitq;
+use turboquant::sift::SiftSmallDataset;
+use turboquant::store::VectorStore;
 use turboquant::TurboQuantFlatIndex;
 
 fn compute_recall(result: &[(usize, f32)], gt: &[i32], k: usize) -> f32 {
@@ -19,7 +19,8 @@ fn compute_recall(result: &[(usize, f32)], gt: &[i32], k: usize) -> f32 {
 }
 
 fn main() {
-    let data_dir = std::env::args().nth(1)
+    let data_dir = std::env::args()
+        .nth(1)
         .map(|p| Path::new(&p).to_path_buf())
         .unwrap_or_else(|| {
             let default = Path::new("/Users/moyong/project/ai/models/data/siftsmall");
@@ -30,7 +31,10 @@ fn main() {
             }
         });
     if !data_dir.exists() {
-        eprintln!("siftsmall data not found at {:?}\nUsage: siftsmall_qps [DATA_DIR]", data_dir);
+        eprintln!(
+            "siftsmall data not found at {:?}\nUsage: siftsmall_qps [DATA_DIR]",
+            data_dir
+        );
         std::process::exit(1);
     }
 
@@ -93,11 +97,22 @@ fn main() {
         let p99 = latencies[(latencies.len() as f64 * 0.99) as usize];
         let search_qps = (nq * bench_rounds) as f64 / (total_ms / 1000.0);
 
-        println!("  QPS: {:.0}, Recall@{}: {:.2}%, P50: {:.0}us, P99: {:.0}us",
-                 search_qps, k, recall * 100.0, p50, p99);
+        println!(
+            "  QPS: {:.0}, Recall@{}: {:.2}%, P50: {:.0}us, P99: {:.0}us",
+            search_qps,
+            k,
+            recall * 100.0,
+            p50,
+            p99
+        );
 
         all_results.push(BenchResult {
-            name: "TQ 4bit+SQ8".into(), search_qps, latency_us: p50, recall, p99_us: p99, p50_us: p50,
+            name: "TQ 4bit+SQ8".into(),
+            search_qps,
+            latency_us: p50,
+            recall,
+            p99_us: p99,
+            p50_us: p50,
         });
     }
 
@@ -138,11 +153,22 @@ fn main() {
         let p99 = latencies[(latencies.len() as f64 * 0.99) as usize];
         let search_qps = (nq * bench_rounds) as f64 / (total_ms / 1000.0);
 
-        println!("  QPS: {:.0}, Recall@{}: {:.2}%, P50: {:.0}us, P99: {:.0}us",
-                 search_qps, k, recall * 100.0, p50, p99);
+        println!(
+            "  QPS: {:.0}, Recall@{}: {:.2}%, P50: {:.0}us, P99: {:.0}us",
+            search_qps,
+            k,
+            recall * 100.0,
+            p50,
+            p99
+        );
 
         all_results.push(BenchResult {
-            name: "RaBitQ Flat+SQ8".into(), search_qps, latency_us: p50, recall, p99_us: p99, p50_us: p50,
+            name: "RaBitQ Flat+SQ8".into(),
+            search_qps,
+            latency_us: p50,
+            recall,
+            p99_us: p99,
+            p50_us: p50,
         });
     }
 
@@ -185,11 +211,23 @@ fn main() {
             let p99 = latencies[(latencies.len() as f64 * 0.99) as usize];
             let search_qps = (nq * bench_rounds) as f64 / (total_ms / 1000.0);
 
-            println!("  nprobe={}: QPS={:.0}, Recall@{}={:.2}%, P50={:.0}us, P99={:.0}us",
-                     nprobe, search_qps, k, recall * 100.0, p50, p99);
+            println!(
+                "  nprobe={}: QPS={:.0}, Recall@{}={:.2}%, P50={:.0}us, P99={:.0}us",
+                nprobe,
+                search_qps,
+                k,
+                recall * 100.0,
+                p50,
+                p99
+            );
 
             all_results.push(BenchResult {
-                name: format!("IVF-64 np={}", nprobe), search_qps, latency_us: p50, recall, p99_us: p99, p50_us: p50,
+                name: format!("IVF-64 np={}", nprobe),
+                search_qps,
+                latency_us: p50,
+                recall,
+                p99_us: p99,
+                p50_us: p50,
             });
         }
     }
@@ -233,11 +271,23 @@ fn main() {
             let p99 = latencies[(latencies.len() as f64 * 0.99) as usize];
             let search_qps = (nq * bench_rounds) as f64 / (total_ms / 1000.0);
 
-            println!("  nprobe={}: QPS={:.0}, Recall@{}={:.2}%, P50={:.0}us, P99={:.0}us",
-                     nprobe, search_qps, k, recall * 100.0, p50, p99);
+            println!(
+                "  nprobe={}: QPS={:.0}, Recall@{}={:.2}%, P50={:.0}us, P99={:.0}us",
+                nprobe,
+                search_qps,
+                k,
+                recall * 100.0,
+                p50,
+                p99
+            );
 
             all_results.push(BenchResult {
-                name: format!("IVF-256 np={}", nprobe), search_qps, latency_us: p50, recall, p99_us: p99, p50_us: p50,
+                name: format!("IVF-256 np={}", nprobe),
+                search_qps,
+                latency_us: p50,
+                recall,
+                p99_us: p99,
+                p50_us: p50,
             });
         }
     }
@@ -281,11 +331,23 @@ fn main() {
             let p99 = latencies[(latencies.len() as f64 * 0.99) as usize];
             let search_qps = (nq * bench_rounds) as f64 / (total_ms / 1000.0);
 
-            println!("  nprobe={}: QPS={:.0}, Recall@{}={:.2}%, P50={:.0}us, P99={:.0}us",
-                     nprobe, search_qps, k, recall * 100.0, p50, p99);
+            println!(
+                "  nprobe={}: QPS={:.0}, Recall@{}={:.2}%, P50={:.0}us, P99={:.0}us",
+                nprobe,
+                search_qps,
+                k,
+                recall * 100.0,
+                p50,
+                p99
+            );
 
             all_results.push(BenchResult {
-                name: format!("TQ-IVF-64 np={}", nprobe), search_qps, latency_us: p50, recall, p99_us: p99, p50_us: p50,
+                name: format!("TQ-IVF-64 np={}", nprobe),
+                search_qps,
+                latency_us: p50,
+                recall,
+                p99_us: p99,
+                p50_us: p50,
             });
         }
     }
@@ -329,11 +391,23 @@ fn main() {
             let p99 = latencies[(latencies.len() as f64 * 0.99) as usize];
             let search_qps = (nq * bench_rounds) as f64 / (total_ms / 1000.0);
 
-            println!("  nprobe={}: QPS={:.0}, Recall@{}={:.2}%, P50={:.0}us, P99={:.0}us",
-                     nprobe, search_qps, k, recall * 100.0, p50, p99);
+            println!(
+                "  nprobe={}: QPS={:.0}, Recall@{}={:.2}%, P50={:.0}us, P99={:.0}us",
+                nprobe,
+                search_qps,
+                k,
+                recall * 100.0,
+                p50,
+                p99
+            );
 
             all_results.push(BenchResult {
-                name: format!("TQ-IVF-256 np={}", nprobe), search_qps, latency_us: p50, recall, p99_us: p99, p50_us: p50,
+                name: format!("TQ-IVF-256 np={}", nprobe),
+                search_qps,
+                latency_us: p50,
+                recall,
+                p99_us: p99,
+                p50_us: p50,
             });
         }
     }
@@ -385,32 +459,69 @@ fn main() {
             let p99 = latencies[(latencies.len() as f64 * 0.99) as usize];
             let search_qps = (nq * bench_rounds) as f64 / (total_ms / 1000.0);
 
-            println!("  nprobe={}: QPS={:.0}, Recall@{}={:.2}%, P50={:.0}us, P99={:.0}us",
-                     nprobe, search_qps, k, recall * 100.0, p50, p99);
+            println!(
+                "  nprobe={}: QPS={:.0}, Recall@{}={:.2}%, P50={:.0}us, P99={:.0}us",
+                nprobe,
+                search_qps,
+                k,
+                recall * 100.0,
+                p50,
+                p99
+            );
 
             all_results.push(BenchResult {
-                name: format!("Persisted np={}", nprobe), search_qps, latency_us: p50, recall, p99_us: p99, p50_us: p50,
+                name: format!("Persisted np={}", nprobe),
+                search_qps,
+                latency_us: p50,
+                recall,
+                p99_us: p99,
+                p50_us: p50,
             });
         }
     }
 
     // ========== 汇总 ==========
     println!("\n{}", "=".repeat(90));
-    println!("SIFT Small QPS 基准测试结果 (d={}, nb={}, nq={}, k={})", d, nb, nq, k);
+    println!(
+        "SIFT Small QPS 基准测试结果 (d={}, nb={}, nq={}, k={})",
+        d, nb, nq, k
+    );
     println!("{}", "=".repeat(90));
-    println!("{:<20} | {:>10} | {:>10} | {:>10} | {:>10} | {:>8}",
-             "方法", "QPS", "P50(us)", "P99(us)", "Recall@10", "延迟比");
+    println!(
+        "{:<20} | {:>10} | {:>10} | {:>10} | {:>10} | {:>8}",
+        "方法", "QPS", "P50(us)", "P99(us)", "Recall@10", "延迟比"
+    );
     println!("{}", "-".repeat(80));
 
     let baseline_p50 = all_results.first().map(|r| r.p50_us).unwrap_or(1.0);
     for r in &all_results {
         let ratio = r.p50_us / baseline_p50;
-        println!("{:<20} | {:>10.0} | {:>10.0} | {:>10.0} | {:>9.2}% | {:>7.2}x",
-                 r.name, r.search_qps, r.p50_us, r.p99_us, r.recall * 100.0, ratio);
+        println!(
+            "{:<20} | {:>10.0} | {:>10.0} | {:>10.0} | {:>9.2}% | {:>7.2}x",
+            r.name,
+            r.search_qps,
+            r.p50_us,
+            r.p99_us,
+            r.recall * 100.0,
+            ratio
+        );
     }
 
-    let best_qps = all_results.iter().max_by(|a, b| a.search_qps.partial_cmp(&b.search_qps).unwrap()).unwrap();
-    let best_recall = all_results.iter().max_by(|a, b| a.recall.partial_cmp(&b.recall).unwrap()).unwrap();
-    println!("\n最高 QPS: {} ({:.0} QPS)", best_qps.name, best_qps.search_qps);
-    println!("最高 Recall: {} ({:.2}%)", best_recall.name, best_recall.recall * 100.0);
+    let best_qps = all_results
+        .iter()
+        .max_by(|a, b| a.search_qps.partial_cmp(&b.search_qps).unwrap())
+        .unwrap();
+    let best_recall = all_results
+        .iter()
+        .max_by(|a, b| a.recall.partial_cmp(&b.recall).unwrap())
+        .unwrap();
+    println!(
+        "\n最高 QPS: {} ({:.0} QPS)",
+        best_qps.name, best_qps.search_qps
+    );
+    println!(
+        "最高 Recall: {} ({:.2}%)",
+        best_recall.name,
+        best_recall.recall * 100.0
+    );
 }

@@ -87,8 +87,8 @@ impl LloydMaxQuantizer {
 
         // 预计算权重和累积和
         let mut xs = vec![0.0f64; ngrid];
-        let mut prefix_w = vec![0.0f64; ngrid + 1];   // 权重累积和
-        let mut prefix_wx = vec![0.0f64; ngrid + 1];  // 加权累积和
+        let mut prefix_w = vec![0.0f64; ngrid + 1]; // 权重累积和
+        let mut prefix_wx = vec![0.0f64; ngrid + 1]; // 加权累积和
 
         for i in 0..ngrid {
             let x = -1.0 + (i as f64 + 0.5) * step;
@@ -149,17 +149,22 @@ impl LloydMaxQuantizer {
             cuts[0] = 0;
             cuts[self.k] = ngrid;
             for i in 1..self.k {
-                cuts[i] = match xs.binary_search_by(|v| v.partial_cmp(&boundaries_d[i - 1]).unwrap()) {
-                    Ok(idx) => idx,
-                    Err(idx) => idx,
-                };
+                cuts[i] =
+                    match xs.binary_search_by(|v| v.partial_cmp(&boundaries_d[i - 1]).unwrap()) {
+                        Ok(idx) => idx,
+                        Err(idx) => idx,
+                    };
             }
 
             // 更新中心并检查收敛
             let mut max_delta = 0.0f64;
             for i in 0..self.k {
                 let left = if i == 0 { -1.0 } else { boundaries_d[i - 1] };
-                let right = if i + 1 == self.k { 1.0 } else { boundaries_d[i] };
+                let right = if i + 1 == self.k {
+                    1.0
+                } else {
+                    boundaries_d[i]
+                };
                 let c = range_mean(cuts[i], cuts[i + 1], 0.5 * (left + right));
                 let c = c.min(right).max(left);
                 max_delta = max_delta.max((c - centroids_d[i]).abs());
@@ -195,7 +200,10 @@ impl LloydMaxQuantizer {
     /// # 返回值
     /// 量化中心索引 (0..k-1)
     pub fn select_index(&self, x: f32) -> u8 {
-        match self.boundaries.binary_search_by(|b| b.partial_cmp(&x).unwrap()) {
+        match self
+            .boundaries
+            .binary_search_by(|b| b.partial_cmp(&x).unwrap())
+        {
             Ok(idx) => idx as u8,
             Err(idx) => idx as u8,
         }
@@ -388,7 +396,13 @@ impl LloydMaxQuantizer {
         }
     }
 
-    pub fn build_distance_lut_range_into(&self, query: &[f32], range_start: usize, range_end: usize, buf: &mut Vec<[f32; 256]>) {
+    pub fn build_distance_lut_range_into(
+        &self,
+        query: &[f32],
+        range_start: usize,
+        range_end: usize,
+        buf: &mut Vec<[f32; 256]>,
+    ) {
         let chunk_len = range_end - range_start;
         if buf.len() < chunk_len {
             buf.resize(chunk_len, [0.0f32; 256]);
@@ -463,7 +477,12 @@ impl LloydMaxQuantizer {
         (lo_lut, hi_lut)
     }
 
-    pub fn compute_distance_with_split_lut(&self, code: &[u8], lo_lut: &[[f32; 16]], hi_lut: &[[f32; 16]]) -> f32 {
+    pub fn compute_distance_with_split_lut(
+        &self,
+        code: &[u8],
+        lo_lut: &[[f32; 16]],
+        hi_lut: &[[f32; 16]],
+    ) -> f32 {
         let mut dist = 0.0f32;
         for j in 0..code.len() {
             let byte = code[j] as usize;
@@ -528,9 +547,9 @@ mod tests {
     #[test]
     fn test_code_size() {
         let q4 = LloydMaxQuantizer::new(128, 4);
-        assert_eq!(q4.code_size(), 64);  // 128 * 4 / 8 = 64
+        assert_eq!(q4.code_size(), 64); // 128 * 4 / 8 = 64
         let q6 = LloydMaxQuantizer::new(128, 6);
-        assert_eq!(q6.code_size(), 96);  // 128 * 6 / 8 = 96
+        assert_eq!(q6.code_size(), 96); // 128 * 6 / 8 = 96
         let q8 = LloydMaxQuantizer::new(128, 8);
         assert_eq!(q8.code_size(), 128); // 128 * 8 / 8 = 128
     }

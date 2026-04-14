@@ -2,13 +2,15 @@
 
 use std::path::Path;
 
-use ::turboquant::*;
 use ::turboquant::store::VectorStore;
+use ::turboquant::*;
 
 fn compute_recall_test(result: &[usize], gt: &[usize], k: usize) -> f32 {
     let mut hits = 0;
     for i in 0..k {
-        if result.contains(&gt[i]) { hits += 1; }
+        if result.contains(&gt[i]) {
+            hits += 1;
+        }
     }
     hits as f32 / k as f32
 }
@@ -37,8 +39,10 @@ fn test_turboquant_persistence() {
     store.save_turboquant(&index).unwrap();
 
     let stats = store.stats().unwrap();
-    println!("TurboQuant 存储: {:?} (codes={}, sq8={})",
-             stats.index_type, stats.code_count, stats.sq8_count);
+    println!(
+        "TurboQuant 存储: {:?} (codes={}, sq8={})",
+        stats.index_type, stats.code_count, stats.sq8_count
+    );
     assert_eq!(stats.ntotal, nb);
     assert_eq!(stats.code_count, nb);
     assert_eq!(stats.sq8_count, nb);
@@ -58,8 +62,14 @@ fn test_turboquant_persistence() {
     recall_before /= nq as f32;
     recall_after /= nq as f32;
 
-    println!("TurboQuant 4-bit+SQ8 持久化前后召回率: {:.4} vs {:.4}", recall_before, recall_after);
-    assert!((recall_before - recall_after).abs() < 0.01, "持久化前后召回率不一致");
+    println!(
+        "TurboQuant 4-bit+SQ8 持久化前后召回率: {:.4} vs {:.4}",
+        recall_before, recall_after
+    );
+    assert!(
+        (recall_before - recall_after).abs() < 0.01,
+        "持久化前后召回率不一致"
+    );
 }
 
 #[test]
@@ -86,8 +96,10 @@ fn test_rabitq_flat_persistence() {
     store.save_rabitq_flat(&index).unwrap();
 
     let stats = store.stats().unwrap();
-    println!("RaBitQ Flat 存储: {:?} (codes={}, sq8={})",
-             stats.index_type, stats.code_count, stats.sq8_count);
+    println!(
+        "RaBitQ Flat 存储: {:?} (codes={}, sq8={})",
+        stats.index_type, stats.code_count, stats.sq8_count
+    );
     assert_eq!(stats.ntotal, nb);
 
     let loaded = store.load_rabitq_flat().unwrap();
@@ -105,8 +117,14 @@ fn test_rabitq_flat_persistence() {
     recall_before /= nq as f32;
     recall_after /= nq as f32;
 
-    println!("RaBitQ Flat+SQ8 持久化前后召回率: {:.4} vs {:.4}", recall_before, recall_after);
-    assert!((recall_before - recall_after).abs() < 0.01, "持久化前后召回率不一致");
+    println!(
+        "RaBitQ Flat+SQ8 持久化前后召回率: {:.4} vs {:.4}",
+        recall_before, recall_after
+    );
+    assert!(
+        (recall_before - recall_after).abs() < 0.01,
+        "持久化前后召回率不一致"
+    );
 }
 
 #[test]
@@ -134,8 +152,10 @@ fn test_rabitq_ivf_persistence() {
     store.save_rabitq_ivf(&index).unwrap();
 
     let stats = store.stats().unwrap();
-    println!("RaBitQ IVF 存储: {:?} (codes={}, sq8={})",
-             stats.index_type, stats.code_count, stats.sq8_count);
+    println!(
+        "RaBitQ IVF 存储: {:?} (codes={}, sq8={})",
+        stats.index_type, stats.code_count, stats.sq8_count
+    );
     assert_eq!(stats.ntotal, nb);
 
     let loaded = store.load_rabitq_ivf().unwrap();
@@ -153,8 +173,14 @@ fn test_rabitq_ivf_persistence() {
     recall_before /= nq as f32;
     recall_after /= nq as f32;
 
-    println!("RaBitQ IVF+SQ8 持久化前后召回率: {:.4} vs {:.4}", recall_before, recall_after);
-    assert!((recall_before - recall_after).abs() < 0.01, "持久化前后召回率不一致");
+    println!(
+        "RaBitQ IVF+SQ8 持久化前后召回率: {:.4} vs {:.4}",
+        recall_before, recall_after
+    );
+    assert!(
+        (recall_before - recall_after).abs() < 0.01,
+        "持久化前后召回率不一致"
+    );
 }
 
 #[test]
@@ -167,7 +193,9 @@ fn test_incremental_insert_and_delete() {
     let code = vec![0xABu8, 0xCD, 0xEF, 0x01];
     let sq8 = vec![0x12u8, 0x34, 0x56, 0x78];
 
-    store.insert_turboquant_vector(42, &code, Some(&sq8)).unwrap();
+    store
+        .insert_turboquant_vector(42, &code, Some(&sq8))
+        .unwrap();
 
     let loaded_code = store.get_code(42).unwrap().unwrap();
     assert_eq!(loaded_code, code);
@@ -193,7 +221,9 @@ fn test_rabitq_ivf_incremental_insert() {
     let code = vec![0xFFu8; 24];
     let sq8 = vec![0xAAu8; 64];
 
-    store.insert_rabitq_ivf_vector(100, 3, &code, Some(&sq8)).unwrap();
+    store
+        .insert_rabitq_ivf_vector(100, 3, &code, Some(&sq8))
+        .unwrap();
 
     let loaded_code = store.get_code(100).unwrap().unwrap();
     assert_eq!(loaded_code, code);

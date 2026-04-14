@@ -9,7 +9,8 @@ fn main() {
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
 
     let mut build = cc::Build::new();
-    build.cpp(true)
+    build
+        .cpp(true)
         .file("cpp/vector_query_engine.cpp")
         .include(&rocksdb_include)
         .include("cpp")
@@ -69,8 +70,7 @@ fn find_rocksdb_src() -> PathBuf {
         }
     }
 
-    let target_dir = PathBuf::from(env::var("OUT_DIR").unwrap_or_default())
-        .join("../../..");
+    let target_dir = PathBuf::from(env::var("OUT_DIR").unwrap_or_default()).join("../../..");
     if let Ok(entries) = std::fs::read_dir(&target_dir) {
         for entry in entries.flatten() {
             let build_dir = entry.path().join("build");

@@ -37,8 +37,8 @@
 use std::path::Path;
 
 use rocksdb::{
-    BlockBasedIndexType, BlockBasedOptions, CuckooTableOptions, Env,
-    ReadOptions, SliceTransform, WriteBatch, DB,
+    BlockBasedIndexType, BlockBasedOptions, CuckooTableOptions, Env, ReadOptions, SliceTransform,
+    WriteBatch, DB,
 };
 use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, Options};
 use serde::{Deserialize, Serialize};
@@ -289,8 +289,7 @@ impl VectorStore {
     }
 
     fn save_meta(&self, meta: &IndexMeta) -> Result<(), String> {
-        let encoded = bincode::serialize(meta)
-            .map_err(|e| format!("序列化元数据失败: {}", e))?;
+        let encoded = bincode::serialize(meta).map_err(|e| format!("序列化元数据失败: {}", e))?;
         self.db
             .put(b"meta", &encoded)
             .map_err(|e| format!("写入元数据失败: {}", e))
@@ -355,7 +354,9 @@ impl VectorStore {
             }
         }
 
-        self.db.write(batch).map_err(|e| format!("批量写入失败: {}", e))?;
+        self.db
+            .write(batch)
+            .map_err(|e| format!("批量写入失败: {}", e))?;
         Ok(())
     }
 
@@ -363,7 +364,10 @@ impl VectorStore {
     pub fn load_turboquant(&self) -> Result<TurboQuantFlatIndex, String> {
         let meta = self.load_meta()?;
         if meta.index_type != IndexType::TurboQuant {
-            return Err(format!("索引类型不匹配: 期望 TurboQuant, 实际 {:?}", meta.index_type));
+            return Err(format!(
+                "索引类型不匹配: 期望 TurboQuant, 实际 {:?}",
+                meta.index_type
+            ));
         }
 
         let mut index = TurboQuantFlatIndex::new(meta.d, meta.nbits, meta.use_sq8);
@@ -373,7 +377,11 @@ impl VectorStore {
         index.codes.resize(meta.ntotal * code_sz, 0);
 
         let read_opts = Self::read_opts_for_load();
-        let cf_name = if meta.storage_version >= 2 { CF_TQ_CODES } else { CF_CODES_V1 };
+        let cf_name = if meta.storage_version >= 2 {
+            CF_TQ_CODES
+        } else {
+            CF_CODES_V1
+        };
         let cf = self.cf(cf_name)?;
         for i in 0..meta.ntotal {
             let key = (i as u64).to_le_bytes();
@@ -391,10 +399,16 @@ impl VectorStore {
             let mut sq8 = SQ8Quantizer::new(meta.d);
             sq8.vmin = meta.sq8_vmin;
             sq8.vmax = meta.sq8_vmax;
-            sq8.scale = (0..meta.d).map(|j| (sq8.vmax[j] - sq8.vmin[j]) / 255.0).collect();
+            sq8.scale = (0..meta.d)
+                .map(|j| (sq8.vmax[j] - sq8.vmin[j]) / 255.0)
+                .collect();
             index.sq8 = Some(sq8);
 
-            let cf_name = if meta.storage_version >= 2 { CF_TQ_SQ8 } else { CF_SQ8_V1 };
+            let cf_name = if meta.storage_version >= 2 {
+                CF_TQ_SQ8
+            } else {
+                CF_SQ8_V1
+            };
             let cf = self.cf(cf_name)?;
             for i in 0..meta.ntotal {
                 let key = (i as u64).to_le_bytes();
@@ -461,7 +475,9 @@ impl VectorStore {
             }
         }
 
-        self.db.write(batch).map_err(|e| format!("批量写入失败: {}", e))?;
+        self.db
+            .write(batch)
+            .map_err(|e| format!("批量写入失败: {}", e))?;
         Ok(())
     }
 
@@ -469,10 +485,14 @@ impl VectorStore {
     pub fn load_rabitq_flat(&self) -> Result<RaBitQFlatIndex, String> {
         let meta = self.load_meta()?;
         if meta.index_type != IndexType::RaBitQFlat {
-            return Err(format!("索引类型不匹配: 期望 RaBitQFlat, 实际 {:?}", meta.index_type));
+            return Err(format!(
+                "索引类型不匹配: 期望 RaBitQFlat, 实际 {:?}",
+                meta.index_type
+            ));
         }
 
-        let mut index = RaBitQFlatIndex::new(meta.d, meta.nbits, meta.is_inner_product, meta.use_sq8);
+        let mut index =
+            RaBitQFlatIndex::new(meta.d, meta.nbits, meta.is_inner_product, meta.use_sq8);
         index.ntotal = meta.ntotal;
         index.centroid = meta.rabitq_centroid;
 
@@ -493,7 +513,8 @@ impl VectorStore {
                     .get_pinned_cf_opt(cf_signs, &key, &read_opts)
                     .map_err(|e| format!("读取signs失败: {}", e))?
                     .ok_or_else(|| format!("signs缺失: id={}", i))?;
-                index.codes[i * code_sz..i * code_sz + signs_sz].copy_from_slice(&signs_val[..signs_sz]);
+                index.codes[i * code_sz..i * code_sz + signs_sz]
+                    .copy_from_slice(&signs_val[..signs_sz]);
 
                 let factors_val = self
                     .db
@@ -522,10 +543,16 @@ impl VectorStore {
             let mut sq8 = SQ8Quantizer::new(meta.d);
             sq8.vmin = meta.sq8_vmin;
             sq8.vmax = meta.sq8_vmax;
-            sq8.scale = (0..meta.d).map(|j| (sq8.vmax[j] - sq8.vmin[j]) / 255.0).collect();
+            sq8.scale = (0..meta.d)
+                .map(|j| (sq8.vmax[j] - sq8.vmin[j]) / 255.0)
+                .collect();
             index.sq8 = Some(sq8);
 
-            let cf_name = if meta.storage_version >= 2 { CF_RABITQ_SQ8 } else { CF_SQ8_V1 };
+            let cf_name = if meta.storage_version >= 2 {
+                CF_RABITQ_SQ8
+            } else {
+                CF_SQ8_V1
+            };
             let cf = self.cf(cf_name)?;
             for i in 0..meta.ntotal {
                 let key = (i as u64).to_le_bytes();
@@ -546,21 +573,42 @@ impl VectorStore {
     pub fn save_rabitq_ivf(&self, index: &RaBitQIVFIndex) -> Result<(), String> {
         let use_sq8 = index.sq8_quantizers[0].is_some();
         let sq8_vmin: Vec<Vec<f32>> = if use_sq8 {
-            index.sq8_quantizers.iter().map(|opt| opt.as_ref().map_or(vec![], |s| s.vmin.clone())).collect()
-        } else { vec![] };
+            index
+                .sq8_quantizers
+                .iter()
+                .map(|opt| opt.as_ref().map_or(vec![], |s| s.vmin.clone()))
+                .collect()
+        } else {
+            vec![]
+        };
         let sq8_vmax: Vec<Vec<f32>> = if use_sq8 {
-            index.sq8_quantizers.iter().map(|opt| opt.as_ref().map_or(vec![], |s| s.vmax.clone())).collect()
-        } else { vec![] };
+            index
+                .sq8_quantizers
+                .iter()
+                .map(|opt| opt.as_ref().map_or(vec![], |s| s.vmax.clone()))
+                .collect()
+        } else {
+            vec![]
+        };
         let cluster_ids: Vec<Vec<u32>> = index.clusters.iter().map(|c| c.ids.clone()).collect();
 
         let meta = IndexMeta {
             index_type: IndexType::RaBitQIVF,
-            d: index.d, ntotal: index.ntotal, nbits: index.nb_bits, use_sq8,
-            is_inner_product: index.is_inner_product, nlist: index.nlist,
-            hadamard_seed: 0, kmeans_niter: index.kmeans.niter,
-            sq8_vmin: vec![], sq8_vmax: vec![], rabitq_centroid: vec![],
+            d: index.d,
+            ntotal: index.ntotal,
+            nbits: index.nb_bits,
+            use_sq8,
+            is_inner_product: index.is_inner_product,
+            nlist: index.nlist,
+            hadamard_seed: 0,
+            kmeans_niter: index.kmeans.niter,
+            sq8_vmin: vec![],
+            sq8_vmax: vec![],
+            rabitq_centroid: vec![],
             ivf_centroids: index.kmeans.centroids.clone(),
-            ivf_cluster_ids: cluster_ids, ivf_sq8_vmin: sq8_vmin, ivf_sq8_vmax: sq8_vmax,
+            ivf_cluster_ids: cluster_ids,
+            ivf_sq8_vmin: sq8_vmin,
+            ivf_sq8_vmax: sq8_vmax,
             storage_version: 2,
         };
         self.save_meta(&meta)?;
@@ -596,26 +644,34 @@ impl VectorStore {
             batch.put_cf(cf_centroids, centroid_key.as_bytes(), &encoded);
         }
 
-        self.db.write(batch).map_err(|e| format!("批量写入失败: {}", e))?;
+        self.db
+            .write(batch)
+            .map_err(|e| format!("批量写入失败: {}", e))?;
         Ok(())
     }
 
     pub fn load_rabitq_ivf(&self) -> Result<RaBitQIVFIndex, String> {
         let meta = self.load_meta()?;
         if meta.index_type != IndexType::RaBitQIVF {
-            return Err(format!("索引类型不匹配: 期望 RaBitQIVF, 实际 {:?}", meta.index_type));
+            return Err(format!(
+                "索引类型不匹配: 期望 RaBitQIVF, 实际 {:?}",
+                meta.index_type
+            ));
         }
 
         let mut index = RaBitQIVFIndex::new(
-            meta.d, meta.nlist, meta.nbits, meta.is_inner_product, meta.use_sq8,
+            meta.d,
+            meta.nlist,
+            meta.nbits,
+            meta.is_inner_product,
+            meta.use_sq8,
         );
         index.kmeans.centroids = meta.ivf_centroids;
         index.kmeans.niter = meta.kmeans_niter;
 
         for c in 0..meta.nlist {
-            index.cluster_centroids[c].copy_from_slice(
-                &index.kmeans.centroids[c * meta.d..(c + 1) * meta.d],
-            );
+            index.cluster_centroids[c]
+                .copy_from_slice(&index.kmeans.centroids[c * meta.d..(c + 1) * meta.d]);
         }
 
         if meta.use_sq8 {
@@ -623,7 +679,9 @@ impl VectorStore {
                 if let Some(ref mut sq8) = index.sq8_quantizers[c] {
                     sq8.vmin = meta.ivf_sq8_vmin[c].clone();
                     sq8.vmax = meta.ivf_sq8_vmax[c].clone();
-                    sq8.scale = (0..meta.d).map(|j| (sq8.vmax[j] - sq8.vmin[j]) / 255.0).collect();
+                    sq8.scale = (0..meta.d)
+                        .map(|j| (sq8.vmax[j] - sq8.vmin[j]) / 255.0)
+                        .collect();
                 }
             }
         }
@@ -643,30 +701,43 @@ impl VectorStore {
                 index.clusters[c].signs.resize(n_vectors * signs_sz, 0);
                 index.clusters[c].factors.resize(n_vectors * 8, 0);
                 index.clusters[c].codes.resize(n_vectors * code_sz, 0);
-                if meta.use_sq8 { index.clusters[c].sq8_codes.resize(n_vectors * meta.d, 0); }
+                if meta.use_sq8 {
+                    index.clusters[c].sq8_codes.resize(n_vectors * meta.d, 0);
+                }
 
                 for v in 0..n_vectors {
                     let id = ids[v];
                     let key = (id as u64).to_le_bytes();
 
-                    let signs_val = self.db.get_pinned_cf_opt(cf_signs, &key, &read_opts)
+                    let signs_val = self
+                        .db
+                        .get_pinned_cf_opt(cf_signs, &key, &read_opts)
                         .map_err(|_| format!("读取signs失败: id={}", id))?
                         .ok_or_else(|| format!("signs缺失: id={}", id))?;
-                    index.clusters[c].signs[v * signs_sz..(v + 1) * signs_sz].copy_from_slice(&signs_val[..signs_sz]);
-                    index.clusters[c].codes[v * code_sz..v * code_sz + signs_sz].copy_from_slice(&signs_val[..signs_sz]);
+                    index.clusters[c].signs[v * signs_sz..(v + 1) * signs_sz]
+                        .copy_from_slice(&signs_val[..signs_sz]);
+                    index.clusters[c].codes[v * code_sz..v * code_sz + signs_sz]
+                        .copy_from_slice(&signs_val[..signs_sz]);
 
-                    let factors_val = self.db.get_pinned_cf_opt(cf_factors, &key, &read_opts)
+                    let factors_val = self
+                        .db
+                        .get_pinned_cf_opt(cf_factors, &key, &read_opts)
                         .map_err(|_| format!("读取factors失败: id={}", id))?
                         .ok_or_else(|| format!("factors缺失: id={}", id))?;
-                    index.clusters[c].factors[v * 8..(v + 1) * 8].copy_from_slice(&factors_val[..8]);
-                    index.clusters[c].codes[v * code_sz + signs_sz..v * code_sz + signs_sz + 8].copy_from_slice(&factors_val[..8]);
+                    index.clusters[c].factors[v * 8..(v + 1) * 8]
+                        .copy_from_slice(&factors_val[..8]);
+                    index.clusters[c].codes[v * code_sz + signs_sz..v * code_sz + signs_sz + 8]
+                        .copy_from_slice(&factors_val[..8]);
 
                     if meta.use_sq8 {
                         let cf = self.cf(CF_RABITQ_SQ8)?;
-                        let sq8_val = self.db.get_pinned_cf_opt(cf, &key, &read_opts)
+                        let sq8_val = self
+                            .db
+                            .get_pinned_cf_opt(cf, &key, &read_opts)
                             .map_err(|_| format!("读取sq8失败: id={}", id))?
                             .ok_or_else(|| format!("sq8缺失: id={}", id))?;
-                        index.clusters[c].sq8_codes[v * meta.d..(v + 1) * meta.d].copy_from_slice(&sq8_val[..meta.d]);
+                        index.clusters[c].sq8_codes[v * meta.d..(v + 1) * meta.d]
+                            .copy_from_slice(&sq8_val[..meta.d]);
                     }
                 }
             }
@@ -681,23 +752,33 @@ impl VectorStore {
                 index.clusters[c].signs.resize(n_vectors * signs_sz, 0);
                 index.clusters[c].factors.resize(n_vectors * 8, 0);
                 index.clusters[c].codes.resize(n_vectors * code_sz, 0);
-                if meta.use_sq8 { index.clusters[c].sq8_codes.resize(n_vectors * meta.d, 0); }
+                if meta.use_sq8 {
+                    index.clusters[c].sq8_codes.resize(n_vectors * meta.d, 0);
+                }
 
                 for v in 0..n_vectors {
                     let id = ids[v];
                     let key = (id as u64).to_le_bytes();
-                    let code_val = self.db.get_pinned_cf_opt(cf_codes, &key, &read_opts)
+                    let code_val = self
+                        .db
+                        .get_pinned_cf_opt(cf_codes, &key, &read_opts)
                         .map_err(|_| format!("读取codes失败: id={}", id))?
                         .ok_or_else(|| format!("codes缺失: id={}", id))?;
-                    index.clusters[c].codes[v * code_sz..(v + 1) * code_sz].copy_from_slice(&code_val[..code_sz]);
-                    index.clusters[c].signs[v * signs_sz..(v + 1) * signs_sz].copy_from_slice(&code_val[..signs_sz]);
-                    index.clusters[c].factors[v * 8..(v + 1) * 8].copy_from_slice(&code_val[signs_sz..signs_sz + 8]);
+                    index.clusters[c].codes[v * code_sz..(v + 1) * code_sz]
+                        .copy_from_slice(&code_val[..code_sz]);
+                    index.clusters[c].signs[v * signs_sz..(v + 1) * signs_sz]
+                        .copy_from_slice(&code_val[..signs_sz]);
+                    index.clusters[c].factors[v * 8..(v + 1) * 8]
+                        .copy_from_slice(&code_val[signs_sz..signs_sz + 8]);
 
                     if meta.use_sq8 {
-                        let sq8_val = self.db.get_pinned_cf_opt(cf_sq8, &key, &read_opts)
+                        let sq8_val = self
+                            .db
+                            .get_pinned_cf_opt(cf_sq8, &key, &read_opts)
                             .map_err(|_| format!("读取sq8失败: id={}", id))?
                             .ok_or_else(|| format!("sq8缺失: id={}", id))?;
-                        index.clusters[c].sq8_codes[v * meta.d..(v + 1) * meta.d].copy_from_slice(&sq8_val[..meta.d]);
+                        index.clusters[c].sq8_codes[v * meta.d..(v + 1) * meta.d]
+                            .copy_from_slice(&sq8_val[..meta.d]);
                     }
                 }
             }
@@ -710,35 +791,59 @@ impl VectorStore {
 
     // ─── 增量操作 ───
 
-    pub fn insert_turboquant_vector(&self, id: u64, code: &[u8], sq8_code: Option<&[u8]>) -> Result<(), String> {
+    pub fn insert_turboquant_vector(
+        &self,
+        id: u64,
+        code: &[u8],
+        sq8_code: Option<&[u8]>,
+    ) -> Result<(), String> {
         let key = id.to_le_bytes();
         let cf = self.cf(CF_TQ_CODES)?;
-        self.db.put_cf(cf, &key, code).map_err(|e| format!("写入codes失败: id={}", id))?;
+        self.db
+            .put_cf(cf, &key, code)
+            .map_err(|e| format!("写入codes失败: id={}", id))?;
         if let Some(sq8) = sq8_code {
             let cf = self.cf(CF_TQ_SQ8)?;
-            self.db.put_cf(cf, &key, sq8).map_err(|e| format!("写入sq8失败: id={}", id))?;
+            self.db
+                .put_cf(cf, &key, sq8)
+                .map_err(|e| format!("写入sq8失败: id={}", id))?;
         }
         Ok(())
     }
 
-    pub fn insert_rabitq_ivf_vector(&self, id: u64, cluster_id: usize, code: &[u8], sq8_code: Option<&[u8]>) -> Result<(), String> {
+    pub fn insert_rabitq_ivf_vector(
+        &self,
+        id: u64,
+        cluster_id: usize,
+        code: &[u8],
+        sq8_code: Option<&[u8]>,
+    ) -> Result<(), String> {
         let key = id.to_le_bytes();
         let signs_sz = code.len().saturating_sub(8);
         if signs_sz > 0 {
             let cf = self.cf(CF_RABITQ_SIGNS)?;
-            self.db.put_cf(cf, &key, &code[..signs_sz]).map_err(|e| format!("写入signs失败: id={}", id))?;
+            self.db
+                .put_cf(cf, &key, &code[..signs_sz])
+                .map_err(|e| format!("写入signs失败: id={}", id))?;
         }
         if code.len() >= signs_sz + 8 {
             let cf = self.cf(CF_RABITQ_FACTORS)?;
-            self.db.put_cf(cf, &key, &code[signs_sz..signs_sz + 8]).map_err(|e| format!("写入factors失败: id={}", id))?;
+            self.db
+                .put_cf(cf, &key, &code[signs_sz..signs_sz + 8])
+                .map_err(|e| format!("写入factors失败: id={}", id))?;
         }
         if let Some(sq8) = sq8_code {
             let cf = self.cf(CF_RABITQ_SQ8)?;
-            self.db.put_cf(cf, &key, sq8).map_err(|e| format!("写入sq8失败: id={}", id))?;
+            self.db
+                .put_cf(cf, &key, sq8)
+                .map_err(|e| format!("写入sq8失败: id={}", id))?;
         }
         let cf = self.cf(CF_FACTORS_V1)?;
-        let cluster_bytes = bincode::serialize(&cluster_id).map_err(|e| format!("序列化cluster_id失败: {}", e))?;
-        self.db.put_cf(cf, &key, &cluster_bytes).map_err(|e| format!("写入factors失败: id={}", id))?;
+        let cluster_bytes =
+            bincode::serialize(&cluster_id).map_err(|e| format!("序列化cluster_id失败: {}", e))?;
+        self.db
+            .put_cf(cf, &key, &cluster_bytes)
+            .map_err(|e| format!("写入factors失败: id={}", id))?;
         Ok(())
     }
 
@@ -754,7 +859,9 @@ impl VectorStore {
                 return Ok(Some(val));
             }
         }
-        if let (Ok(cf_signs), Ok(cf_factors)) = (self.cf(CF_RABITQ_SIGNS), self.cf(CF_RABITQ_FACTORS)) {
+        if let (Ok(cf_signs), Ok(cf_factors)) =
+            (self.cf(CF_RABITQ_SIGNS), self.cf(CF_RABITQ_FACTORS))
+        {
             let signs = self.db.get_cf(cf_signs, &key);
             let factors = self.db.get_cf(cf_factors, &key);
             if let (Ok(Some(s)), Ok(Some(f))) = (signs, factors) {
@@ -780,7 +887,16 @@ impl VectorStore {
 
     pub fn delete_vector(&self, id: u64) -> Result<(), String> {
         let key = id.to_le_bytes();
-        for cf_name in [CF_RABITQ_SIGNS, CF_RABITQ_FACTORS, CF_RABITQ_SQ8, CF_TQ_CODES, CF_TQ_SQ8, CF_CODES_V1, CF_SQ8_V1, CF_FACTORS_V1] {
+        for cf_name in [
+            CF_RABITQ_SIGNS,
+            CF_RABITQ_FACTORS,
+            CF_RABITQ_SQ8,
+            CF_TQ_CODES,
+            CF_TQ_SQ8,
+            CF_CODES_V1,
+            CF_SQ8_V1,
+            CF_FACTORS_V1,
+        ] {
             if let Ok(cf) = self.cf(cf_name) {
                 let _ = self.db.delete_cf(cf, &key);
             }
@@ -797,9 +913,20 @@ impl VectorStore {
         };
         if let Ok(cf) = self.cf(cf_name) {
             let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-            for item in iter { if item.is_ok() { code_count += 1; } }
+            for item in iter {
+                if item.is_ok() {
+                    code_count += 1;
+                }
+            }
         }
-        Ok(StoreStats { index_type: meta.index_type, d: meta.d, ntotal: meta.ntotal, code_count, sq8_count: code_count, use_sq8: meta.use_sq8 })
+        Ok(StoreStats {
+            index_type: meta.index_type,
+            d: meta.d,
+            ntotal: meta.ntotal,
+            code_count,
+            sq8_count: code_count,
+            use_sq8: meta.use_sq8,
+        })
     }
 }
 

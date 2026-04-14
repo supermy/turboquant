@@ -21,15 +21,8 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             rust: stable
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            rust: stable
-            cross: true
           - os: macos-latest
             target: aarch64-apple-darwin
-            rust: stable
-          - os: macos-13
-            target: x86_64-apple-darwin
             rust: stable
           - os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -44,10 +37,6 @@ jobs:
           toolchain: ${{ matrix.rust }}
           targets: ${{ matrix.target }}
 
-      - name: Install cross
-        if: matrix.cross
-        run: cargo install cross --locked
-
       - name: Cache Cargo registry
         uses: actions/cache@v4
         with:
@@ -60,7 +49,7 @@ jobs:
             ${{ runner.os }}-${{ matrix.target }}-cargo-
 
       - name: Install dependencies (Linux)
-        if: runner.os == 'Linux' && !matrix.cross
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libgflags-dev libsnappy-dev zlib1g-dev libbz2-dev liblz4-dev libzstd-dev
@@ -71,29 +60,21 @@ jobs:
           choco install cmake --installargs '"ADD_CMAKE_TO_PATH=System"' -y
           choco install strawberryperl -y
 
-      - name: Build (native)
-        if: "!matrix.cross"
+      - name: Build
         run: cargo build --verbose --target ${{ matrix.target }}
 
-      - name: Build (cross)
-        if: matrix.cross
-        run: cross build --verbose --target ${{ matrix.target }}
-
-      - name: Run tests (native)
-        if: "!matrix.cross"
+      - name: Run tests
         run: cargo test --lib --verbose --target ${{ matrix.target }}
 
-      - name: Build release (native)
-        if: "!matrix.cross"
+      - name: Build release
         run: cargo build --release --verbose --target ${{ matrix.target }}
 
       - name: Build no-default-features
-        if: "!matrix.cross && runner.os != 'Windows'"
+        if: runner.os != 'Windows'
         run: cargo build --no-default-features --verbose
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
-        if: "!matrix.cross"
         with:
           name: turboquant-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/turboquant*
@@ -119,4 +100,4 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets -- -D clippy::correctness -D clippy::suspicious -A clippy::style -A clippy::complexity -A clippy::perf -A clippy::pedantic

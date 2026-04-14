@@ -58,7 +58,11 @@ impl TurboQuantFlatIndex {
         let d_rotated = next_power_of_2(d);
         let rotation = HadamardRotation::new(d, 12345);
         let quantizer = LloydMaxQuantizer::new(d_rotated, nbits);
-        let sq8 = if use_sq8 { Some(SQ8Quantizer::new(d)) } else { None };
+        let sq8 = if use_sq8 {
+            Some(SQ8Quantizer::new(d))
+        } else {
+            None
+        };
 
         Self {
             d,
@@ -112,7 +116,10 @@ impl TurboQuantFlatIndex {
 
         for i in 0..n {
             let xi = &x_rotated[i * self.rotation.d_out..(i + 1) * self.rotation.d_out];
-            self.quantizer.encode(xi, &mut self.codes[(self.ntotal + i) * code_sz..(self.ntotal + i + 1) * code_sz]);
+            self.quantizer.encode(
+                xi,
+                &mut self.codes[(self.ntotal + i) * code_sz..(self.ntotal + i + 1) * code_sz],
+            );
         }
 
         // 步骤 4: SQ8 编码 (可选)
@@ -121,7 +128,10 @@ impl TurboQuantFlatIndex {
             self.sq8_codes.resize((self.ntotal + n) * sq8_sz, 0);
             for i in 0..n {
                 let xi = &data[i * self.d..(i + 1) * self.d];
-                sq8.encode(xi, &mut self.sq8_codes[(self.ntotal + i) * sq8_sz..(self.ntotal + i + 1) * sq8_sz]);
+                sq8.encode(
+                    xi,
+                    &mut self.sq8_codes[(self.ntotal + i) * sq8_sz..(self.ntotal + i + 1) * sq8_sz],
+                );
             }
         }
 
@@ -144,7 +154,13 @@ impl TurboQuantFlatIndex {
     /// 2. Hadamard 旋转
     /// 3. 粗排: Lloyd-Max 距离计算
     /// 4. 精排: SQ8 距离计算 (可选)
-    pub fn search(&self, queries: &[f32], n: usize, k: usize, refine_factor: usize) -> Vec<Vec<(usize, f32)>> {
+    pub fn search(
+        &self,
+        queries: &[f32],
+        n: usize,
+        k: usize,
+        refine_factor: usize,
+    ) -> Vec<Vec<(usize, f32)>> {
         let mut x_normalized = queries.to_vec();
         for i in 0..n {
             l2_normalize(&mut x_normalized[i * self.d..(i + 1) * self.d]);
@@ -210,7 +226,8 @@ impl TurboQuantFlatIndex {
                         let start = chunk_idx * chunk_size;
                         let end = (start + chunk_size).min(code_sz);
                         let mut lut = Vec::with_capacity(end - start);
-                        self.quantizer.build_distance_lut_range_into(query, start, end, &mut lut);
+                        self.quantizer
+                            .build_distance_lut_range_into(query, start, end, &mut lut);
                         chunk_luts.push(lut);
                     }
 
@@ -252,7 +269,8 @@ impl TurboQuantFlatIndex {
                     }
                 }
 
-                let candidates: Vec<(f32, usize)> = heap.into_iter().map(|(FloatOrd(d), i)| (d, i)).collect();
+                let candidates: Vec<(f32, usize)> =
+                    heap.into_iter().map(|(FloatOrd(d), i)| (d, i)).collect();
 
                 let mut final_heap: BinaryHeap<(FloatOrd, usize)> = BinaryHeap::with_capacity(k);
 
@@ -318,7 +336,9 @@ impl TurboQuantFlatIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::{compute_recall, compute_ground_truth, generate_clustered_data, generate_queries};
+    use crate::utils::{
+        compute_ground_truth, compute_recall, generate_clustered_data, generate_queries,
+    };
 
     /// 测试 TurboQuant 4-bit 召回率
     #[test]
@@ -337,7 +357,10 @@ mod tests {
         index.add(&data, nb);
 
         let results = index.search(&queries, nq, k, 1);
-        let result_ids: Vec<Vec<usize>> = results.iter().map(|r| r.iter().map(|&(i, _)| i).collect()).collect();
+        let result_ids: Vec<Vec<usize>> = results
+            .iter()
+            .map(|r| r.iter().map(|&(i, _)| i).collect())
+            .collect();
         let recall = compute_recall(&result_ids, &gt, nq, k);
 
         println!("TurboQuant 4-bit Recall@{}: {:.4}", k, recall);
@@ -361,11 +384,18 @@ mod tests {
         index.add(&data, nb);
 
         let results = index.search(&queries, nq, k, 10);
-        let result_ids: Vec<Vec<usize>> = results.iter().map(|r| r.iter().map(|&(i, _)| i).collect()).collect();
+        let result_ids: Vec<Vec<usize>> = results
+            .iter()
+            .map(|r| r.iter().map(|&(i, _)| i).collect())
+            .collect();
         let recall = compute_recall(&result_ids, &gt, nq, k);
 
         println!("TurboQuant 4-bit + SQ8 Recall@{}: {:.4}", k, recall);
-        assert!(recall > 0.9, "TurboQuant 4-bit + SQ8 recall too low: {}", recall);
+        assert!(
+            recall > 0.9,
+            "TurboQuant 4-bit + SQ8 recall too low: {}",
+            recall
+        );
     }
 
     /// 测试 TurboQuant 6-bit 召回率
@@ -385,7 +415,10 @@ mod tests {
         index.add(&data, nb);
 
         let results = index.search(&queries, nq, k, 1);
-        let result_ids: Vec<Vec<usize>> = results.iter().map(|r| r.iter().map(|&(i, _)| i).collect()).collect();
+        let result_ids: Vec<Vec<usize>> = results
+            .iter()
+            .map(|r| r.iter().map(|&(i, _)| i).collect())
+            .collect();
         let recall = compute_recall(&result_ids, &gt, nq, k);
 
         println!("TurboQuant 6-bit Recall@{}: {:.4}", k, recall);

@@ -19,42 +19,42 @@
 //! | RaBitQ 1-bit + SQ8 | 152B | 98.2% |
 //! | RaBitQ IVF + SQ8 | 152B | 98.7% |
 
-pub mod utils;
 pub mod hadamard;
-pub mod lloyd_max;
-pub mod sq8;
-pub mod turboquant;
-pub mod rabitq;
-pub mod kmeans;
 pub mod ivf;
-pub mod sift;
-pub mod store;
 pub mod ivf_store;
+pub mod kmeans;
+pub mod lloyd_max;
+pub mod rabitq;
+pub mod sift;
+pub mod sq8;
+pub mod store;
+pub mod turboquant;
+pub mod utils;
 pub mod vector_engine_ffi;
 
 #[cfg(feature = "nng")]
 pub mod server;
 
-pub use utils::*;
 pub use hadamard::HadamardRotation;
-pub use lloyd_max::LloydMaxQuantizer;
-pub use sq8::SQ8Quantizer;
-pub use turboquant::TurboQuantFlatIndex;
-pub use rabitq::{RaBitQCodec, RaBitQFlatIndex};
-pub use kmeans::KMeans;
 pub use ivf::RaBitQIVFIndex;
 pub use ivf::TurboQuantIVFIndex;
-pub use sift::SiftSmallDataset;
-pub use store::{VectorStore, IndexMeta, IndexType, StoreStats};
 pub use ivf_store::RocksDBIVFIndex;
 pub use ivf_store::RocksDBTQIVFIndex;
+pub use kmeans::KMeans;
+pub use lloyd_max::LloydMaxQuantizer;
+pub use rabitq::{RaBitQCodec, RaBitQFlatIndex};
+pub use sift::SiftSmallDataset;
+pub use sq8::SQ8Quantizer;
+pub use store::{IndexMeta, IndexType, StoreStats, VectorStore};
+pub use turboquant::TurboQuantFlatIndex;
+pub use utils::*;
 pub use vector_engine_ffi::VectorEngine;
 
-#[cfg(feature = "nng")]
-pub use server::TurboQuantServer;
-#[cfg(feature = "nng")]
-pub use server::VectorEngineService;
 #[cfg(feature = "nng")]
 pub use server::MemoryIndex;
 #[cfg(feature = "nng")]
 pub use server::PersistedIndex;
+#[cfg(feature = "nng")]
+pub use server::TurboQuantServer;
+#[cfg(feature = "nng")]
+pub use server::VectorEngineService;

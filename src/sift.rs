@@ -120,12 +120,29 @@ impl SiftSmallDataset {
         let (nb, d, base) = read_fvecs(&data_dir.join("siftsmall_base.fvecs"))?;
         let (nq, _dq, query) = read_fvecs(&data_dir.join("siftsmall_query.fvecs"))?;
         let (_, k, groundtruth) = read_ivecs(&data_dir.join("siftsmall_groundtruth.ivecs"))?;
-        Ok(Self { base, nb, query, nq, groundtruth, d, k })
+        Ok(Self {
+            base,
+            nb,
+            query,
+            nq,
+            groundtruth,
+            d,
+            k,
+        })
     }
 
-    #[inline] pub fn get_base(&self, i: usize) -> &[f32] { &self.base[i * self.d..][..self.d] }
-    #[inline] pub fn get_query(&self, i: usize) -> &[f32] { &self.query[i * self.d..][..self.d] }
-    #[inline] pub fn get_groundtruth(&self, i: usize) -> &[i32] { &self.groundtruth[i * self.k..][..self.k] }
+    #[inline]
+    pub fn get_base(&self, i: usize) -> &[f32] {
+        &self.base[i * self.d..][..self.d]
+    }
+    #[inline]
+    pub fn get_query(&self, i: usize) -> &[f32] {
+        &self.query[i * self.d..][..self.d]
+    }
+    #[inline]
+    pub fn get_groundtruth(&self, i: usize) -> &[i32] {
+        &self.groundtruth[i * self.k..][..self.k]
+    }
 }
 
 #[cfg(test)]
@@ -136,11 +153,17 @@ mod tests {
     fn test_load_siftsmall() {
         let dir = std::env::var("SIFT_DATA_DIR")
             .map(|p| Path::new(&p).to_path_buf())
-            .unwrap_or_else(|_| Path::new("/Users/moyong/project/ai/models/data/siftsmall").to_path_buf());
-        if !dir.exists() { return; }
+            .unwrap_or_else(|_| {
+                Path::new("/Users/moyong/project/ai/models/data/siftsmall").to_path_buf()
+            });
+        if !dir.exists() {
+            return;
+        }
         let ds = SiftSmallDataset::load(&dir).unwrap();
-        println!("SIFT Small: {} base({}D) {} query({}D) gt({})",
-                 ds.nb, ds.d, ds.nq, ds.d, ds.k);
+        println!(
+            "SIFT Small: {} base({}D) {} query({}D) gt({})",
+            ds.nb, ds.d, ds.nq, ds.d, ds.k
+        );
         assert_eq!(ds.nb, 10000);
         assert_eq!(ds.nq, 100);
         assert_eq!(ds.d, 128);

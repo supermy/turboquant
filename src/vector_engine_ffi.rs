@@ -60,8 +60,8 @@ pub struct VectorEngine {
 
 impl VectorEngine {
     pub fn open(path: &Path) -> Result<Self, String> {
-        let c_path = CString::new(path.to_str().ok_or("invalid path")?)
-            .map_err(|e| e.to_string())?;
+        let c_path =
+            CString::new(path.to_str().ok_or("invalid path")?).map_err(|e| e.to_string())?;
         let handle = unsafe { vq_engine_open(c_path.as_ptr()) };
         if handle.is_null() {
             return Err("failed to open vector engine".into());
@@ -101,12 +101,7 @@ impl VectorEngine {
         vec
     }
 
-    pub fn flat_search(
-        &self,
-        query: &[f32],
-        k: usize,
-        index_type: usize,
-    ) -> Vec<(u32, f32)> {
+    pub fn flat_search(&self, query: &[f32], k: usize, index_type: usize) -> Vec<(u32, f32)> {
         let d = query.len();
         let params = CFlatSearchParams {
             query: query.as_ptr(),

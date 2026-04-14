@@ -15,7 +15,9 @@ impl PartialOrd for FloatOrd {
 
 impl Ord for FloatOrd {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.partial_cmp(&other.0).unwrap_or(std::cmp::Ordering::Equal)
+        self.0
+            .partial_cmp(&other.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
     }
 }
 
@@ -24,7 +26,10 @@ pub fn dot_product(a: &[f32], b: &[f32]) -> f32 {
 }
 
 pub fn l2_distance(a: &[f32], b: &[f32]) -> f32 {
-    a.iter().zip(b.iter()).map(|(&x, &y)| (x - y) * (x - y)).sum()
+    a.iter()
+        .zip(b.iter())
+        .map(|(&x, &y)| (x - y) * (x - y))
+        .sum()
 }
 
 #[inline(always)]
@@ -143,7 +148,8 @@ pub fn dot_product_simd(a: &[f32], b: &[f32]) -> f32 {
         #[cfg(not(target_feature = "avx2"))]
         {
             while i + 4 <= n {
-                sum += a[i] * b[i] + a[i + 1] * b[i + 1] + a[i + 2] * b[i + 2] + a[i + 3] * b[i + 3];
+                sum +=
+                    a[i] * b[i] + a[i + 1] * b[i + 1] + a[i + 2] * b[i + 2] + a[i + 3] * b[i + 3];
                 i += 4;
             }
         }
@@ -195,7 +201,8 @@ pub fn sq8_distance_simd(code: &[u8], query: &[f32], vmin: &[f32], scale: &[f32]
             use std::arch::x86_64::*;
             let mut vsum = _mm256_setzero_ps();
             while i + 8 <= d {
-                let codes_low = _mm_loadl_epi64(unsafe { &*(code.as_ptr().add(i) as *const __m128i) });
+                let codes_low =
+                    _mm_loadl_epi64(unsafe { &*(code.as_ptr().add(i) as *const __m128i) });
                 let codes_i32 = _mm256_cvtepu8_epi32(codes_low);
                 let codes_f = _mm256_cvtepi32_ps(codes_i32);
                 let s = _mm256_loadu_ps(scale.as_ptr().add(i));
@@ -210,7 +217,9 @@ pub fn sq8_distance_simd(code: &[u8], query: &[f32], vmin: &[f32], scale: &[f32]
             let lo = _mm256_castps256_ps128(vsum);
             let sum128 = _mm_add_ps(hi, lo);
             let mut result = [0.0f32; 4];
-            unsafe { _mm_storeu_ps(result.as_mut_ptr(), sum128); }
+            unsafe {
+                _mm_storeu_ps(result.as_mut_ptr(), sum128);
+            }
             dist = result[0] + result[1] + result[2] + result[3];
         }
 
@@ -306,7 +315,8 @@ pub fn l2_norm_simd(x: &[f32]) -> f32 {
         #[cfg(not(target_feature = "avx2"))]
         {
             while i + 4 <= n {
-                sum += x[i] * x[i] + x[i + 1] * x[i + 1] + x[i + 2] * x[i + 2] + x[i + 3] * x[i + 3];
+                sum +=
+                    x[i] * x[i] + x[i + 1] * x[i + 1] + x[i + 2] * x[i + 2] + x[i + 3] * x[i + 3];
                 i += 4;
             }
         }
@@ -427,7 +437,14 @@ pub fn generate_queries(
     queries
 }
 
-pub fn compute_ground_truth(data: &[f32], queries: &[f32], n_data: usize, n_queries: usize, d: usize, k: usize) -> Vec<Vec<usize>> {
+pub fn compute_ground_truth(
+    data: &[f32],
+    queries: &[f32],
+    n_data: usize,
+    n_queries: usize,
+    d: usize,
+    k: usize,
+) -> Vec<Vec<usize>> {
     let mut gt = Vec::with_capacity(n_queries);
     for q in 0..n_queries {
         let query = &queries[q * d..(q + 1) * d];
@@ -441,7 +458,12 @@ pub fn compute_ground_truth(data: &[f32], queries: &[f32], n_data: usize, n_quer
     gt
 }
 
-pub fn compute_recall(result_ids: &[Vec<usize>], gt_ids: &[Vec<usize>], nq: usize, k: usize) -> f32 {
+pub fn compute_recall(
+    result_ids: &[Vec<usize>],
+    gt_ids: &[Vec<usize>],
+    nq: usize,
+    k: usize,
+) -> f32 {
     let mut total_recall = 0usize;
     for q in 0..nq {
         let mut found = result_ids[q].clone();

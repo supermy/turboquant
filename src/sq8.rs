@@ -86,8 +86,8 @@ impl SQ8Quantizer {
     pub fn encode(&self, x: &[f32], code: &mut [u8]) {
         for j in 0..self.d {
             // 线性映射到 [0, 1]
-            let normalized = ((x[j] - self.vmin[j]) / (self.vmax[j] - self.vmin[j]))
-                .clamp(0.0, 1.0);
+            let normalized =
+                ((x[j] - self.vmin[j]) / (self.vmax[j] - self.vmin[j])).clamp(0.0, 1.0);
             // 量化到 [0, 255]
             code[j] = (normalized * 255.0) as u8;
         }
@@ -126,7 +126,10 @@ impl SQ8Quantizer {
     }
 
     pub fn preprocess_query(&self, query: &[f32]) -> Vec<f32> {
-        query.iter().zip(self.vmin.iter()).zip(self.scale.iter())
+        query
+            .iter()
+            .zip(self.vmin.iter())
+            .zip(self.scale.iter())
             .map(|((q, v), s)| (q - v) / s)
             .collect()
     }
@@ -164,7 +167,11 @@ mod tests {
         // 检查相对误差
         let orig_norm = crate::utils::l2_norm(x);
         let err = l2_distance(x, &decoded).sqrt();
-        assert!(err / orig_norm < 0.07, "SQ8 相对误差过大: {}", err / orig_norm);
+        assert!(
+            err / orig_norm < 0.07,
+            "SQ8 相对误差过大: {}",
+            err / orig_norm
+        );
     }
 
     /// 测试 SQ8 距离精度

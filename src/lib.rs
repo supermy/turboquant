@@ -31,6 +31,8 @@ pub mod sift;
 pub mod store;
 pub mod ivf_store;
 pub mod vector_engine_ffi;
+
+#[cfg(feature = "nng")]
 pub mod server;
 
 pub use utils::*;
@@ -47,7 +49,12 @@ pub use store::{VectorStore, IndexMeta, IndexType, StoreStats};
 pub use ivf_store::RocksDBIVFIndex;
 pub use ivf_store::RocksDBTQIVFIndex;
 pub use vector_engine_ffi::VectorEngine;
+
+#[cfg(feature = "nng")]
 pub use server::TurboQuantServer;
+#[cfg(feature = "nng")]
 pub use server::VectorEngineService;
+#[cfg(feature = "nng")]
 pub use server::MemoryIndex;
+#[cfg(feature = "nng")]
 pub use server::PersistedIndex;

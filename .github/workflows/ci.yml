@@ -12,23 +12,28 @@ env:
 
 jobs:
   build:
-    name: Build & Test (${{ matrix.os }}, ${{ matrix.rust }})
+    name: Build & Test (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [stable]
         include:
           - os: ubuntu-latest
-            rust: stable
             target: x86_64-unknown-linux-gnu
+            rust: stable
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            rust: stable
+            cross: true
           - os: macos-latest
-            rust: stable
             target: aarch64-apple-darwin
-          - os: windows-latest
             rust: stable
+          - os: macos-13
+            target: x86_64-apple-darwin
+            rust: stable
+          - os: windows-latest
             target: x86_64-pc-windows-msvc
+            rust: stable
 
     steps:
       - uses: actions/checkout@v4
@@ -37,6 +42,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust }}
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --locked
 
       - name: Cache Cargo registry
         uses: actions/cache@v4
@@ -45,24 +55,49 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
 
       - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && !matrix.cross
         run: |
           sudo apt-get update
           sudo apt-get install -y libgflags-dev libsnappy-dev zlib1g-dev libbz2-dev liblz4-dev libzstd-dev
 
-      - name: Build
-        run: cargo build --verbose
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install cmake --installargs '"ADD_CMAKE_TO_PATH=System"' -y
+          choco install strawberryperl -y
 
-      - name: Run tests
-        run: cargo test --lib --verbose
+      - name: Build (native)
+        if: "!matrix.cross"
+        run: cargo build --verbose --target ${{ matrix.target }}
 
-      - name: Build release
-        run: cargo build --release --verbose
+      - name: Build (cross)
+        if: matrix.cross
+        run: cross build --verbose --target ${{ matrix.target }}
+
+      - name: Run tests (native)
+        if: "!matrix.cross"
+        run: cargo test --lib --verbose --target ${{ matrix.target }}
+
+      - name: Build release (native)
+        if: "!matrix.cross"
+        run: cargo build --release --verbose --target ${{ matrix.target }}
+
+      - name: Build no-default-features
+        if: "!matrix.cross && runner.os != 'Windows'"
+        run: cargo build --no-default-features --verbose
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        if: "!matrix.cross"
+        with:
+          name: turboquant-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/turboquant*
+          retention-days: 7
 
   lint:
     name: Clippy & Format

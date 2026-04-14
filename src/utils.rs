@@ -188,7 +188,46 @@ pub fn sq8_distance_simd(code: &[u8], query: &[f32], vmin: &[f32], scale: &[f32]
         dist = vaddvq_f32(vsum);
     }
 
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(target_arch = "x86_64")]
+    {
+        #[cfg(target_feature = "avx2")]
+        {
+            use std::arch::x86_64::*;
+            let mut vsum = _mm256_setzero_ps();
+            while i + 8 <= d {
+                let codes_low = _mm_loadl_epi64(unsafe { &*(code.as_ptr().add(i) as *const __m128i) });
+                let codes_i32 = _mm256_cvtepu8_epi32(codes_low);
+                let codes_f = _mm256_cvtepi32_ps(codes_i32);
+                let s = _mm256_loadu_ps(scale.as_ptr().add(i));
+                let v = _mm256_loadu_ps(vmin.as_ptr().add(i));
+                let q = _mm256_loadu_ps(query.as_ptr().add(i));
+                let decoded = _mm256_fmadd_ps(codes_f, s, v);
+                let diff = _mm256_sub_ps(decoded, q);
+                vsum = _mm256_fmadd_ps(diff, diff, vsum);
+                i += 8;
+            }
+            let hi = _mm256_extractf128_ps(vsum, 1);
+            let lo = _mm256_castps256_ps128(vsum);
+            let sum128 = _mm_add_ps(hi, lo);
+            let mut result = [0.0f32; 4];
+            unsafe { _mm_storeu_ps(result.as_mut_ptr(), sum128); }
+            dist = result[0] + result[1] + result[2] + result[3];
+        }
+
+        #[cfg(not(target_feature = "avx2"))]
+        {
+            while i + 4 <= d {
+                for j in 0..4 {
+                    let decoded = vmin[i + j] + code[i + j] as f32 * scale[i + j];
+                    let diff = decoded - query[i + j];
+                    dist += diff * diff;
+                }
+                i += 4;
+            }
+        }
+    }
+
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     {
         while i + 4 <= d {
             for j in 0..4 {

@@ -13,10 +13,10 @@
 #define VQ_ALLOCA alloca
 #endif
 
-#if defined(__aarch64__) || defined(__ARM_NEON)
+#if defined(__aarch64__) || defined(__ARM_NEON) || defined(_M_ARM64)
 #include <arm_neon.h>
 #define VQ_NEON 1
-#elif defined(__AVX2__)
+#elif defined(__AVX2__) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2) || defined(_M_X64)
 #include <immintrin.h>
 #define VQ_AVX2 1
 #endif

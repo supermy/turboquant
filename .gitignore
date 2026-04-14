@@ -1,6 +1,9 @@
 # Rust
-glm51/target/
-glm51/Cargo.lock
+target/
+study/
+glm51/
+kimi25/
+idea/
 **/*.rs.bk
 *.pdb
 

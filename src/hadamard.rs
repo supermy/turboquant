@@ -20,6 +20,7 @@ use rand::SeedableRng;
 /// Hadamard 旋转器
 ///
 /// 存储 3 轮旋转所需的随机符号和缩放因子
+#[derive(Clone)]
 pub struct HadamardRotation {
     /// 输入维度
     pub d_in: usize,

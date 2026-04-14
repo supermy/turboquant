@@ -9,6 +9,7 @@
 #include <rocksdb/merge_operator.h>
 #include <rocksdb/compaction_filter.h>
 #include <rocksdb/table.h>
+#include <rocksdb/advanced_cache.h>
 
 #include <vector>
 #include <string>
@@ -55,12 +56,33 @@ public:
         opts.create_if_missing = false;
         opts.create_missing_column_families = false;
 
-        auto build_table_opts = []() -> rocksdb::BlockBasedTableOptions {
+        auto sec_cache = rocksdb::NewCompressedSecondaryCache(
+            256 * 1024 * 1024,
+            -1,
+            false,
+            0.5,
+            0.0,
+            nullptr,
+            true,
+            rocksdb::kDefaultCacheMetadataChargePolicy,
+            rocksdb::CompressionType::kLZ4Compression
+        );
+
+        auto build_table_opts = [&sec_cache]() -> rocksdb::BlockBasedTableOptions {
             rocksdb::BlockBasedTableOptions table_opts;
             table_opts.index_type = rocksdb::BlockBasedTableOptions::kBinarySearchWithFirstKey;
             table_opts.format_version = 5;
             table_opts.cache_index_and_filter_blocks = true;
             table_opts.pin_l0_filter_and_index_blocks_in_cache = true;
+
+            rocksdb::LRUCacheOptions cache_opts;
+            cache_opts.capacity = 256 * 1024 * 1024;
+            cache_opts.num_shard_bits = -1;
+            cache_opts.strict_capacity_limit = false;
+            cache_opts.high_pri_pool_ratio = 0.5;
+            cache_opts.low_pri_pool_ratio = 0.0;
+            cache_opts.secondary_cache = sec_cache;
+            table_opts.block_cache = rocksdb::NewLRUCache(cache_opts);
             return table_opts;
         };
 

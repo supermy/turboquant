@@ -11,6 +11,7 @@
 /// Lloyd-Max 量化器
 ///
 /// 针对单位向量分量 (Beta 分布) 优化的标量量化器。
+#[derive(Clone)]
 pub struct LloydMaxQuantizer {
     /// 向量维度
     pub d: usize,

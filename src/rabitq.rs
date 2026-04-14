@@ -16,7 +16,7 @@ use rayon::prelude::*;
 use std::collections::BinaryHeap;
 
 use crate::sq8::SQ8Quantizer;
-use crate::utils::{l2_distance, l2_norm_sq, prefetch_read, FloatOrd};
+use crate::utils::{l2_distance_simd, l2_norm_sq, prefetch_read, FloatOrd};
 
 /// 向量符号因子
 ///
@@ -315,7 +315,7 @@ pub fn compute_query_factors(
     _is_inner_product: bool,
 ) -> QueryFactorsData {
     let qr_to_c_l2sqr = match centroid {
-        Some(c) => l2_distance(query, c),
+        Some(c) => l2_distance_simd(query, c),
         None => l2_norm_sq(query),
     };
 

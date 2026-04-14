@@ -559,7 +559,6 @@ impl TurboQuantIVFIndex {
 
                 if use_split_lut {
                     let (lo_lut, hi_lut) = self.quantizer.build_split_lut(&query_rotated);
-                    let early_stop_threshold = if k1 > 0 { Some(f32::INFINITY) } else { None };
 
                     for (_, cluster_id) in &nearest_buf {
                         let cluster = &self.clusters[*cluster_id];

@@ -149,7 +149,7 @@ impl RocksDBIVFIndex {
         )
         .map_err(|e| format!("打开RocksDB失败: {}", e))?;
 
-        Ok(Self {
+        let mut index = Self {
             db,
             d: 0,
             nlist: 0,
@@ -162,7 +162,61 @@ impl RocksDBIVFIndex {
             sq8_quantizers: vec![],
             cluster_counts: vec![],
             cluster_offsets: vec![],
-        })
+        };
+
+        if let Ok(meta_bytes) = index.db.get(b"meta") {
+            if let Some(bytes) = meta_bytes {
+                if let Ok(meta) = bincode::deserialize::<crate::store::IndexMeta>(&bytes) {
+                    index.d = meta.d;
+                    index.nlist = meta.nlist;
+                    index.nb_bits = meta.nbits;
+                    index.is_inner_product = meta.is_inner_product;
+                    index.use_sq8 = meta.use_sq8;
+                    index.ntotal = meta.ntotal;
+                    index.centroids = meta.ivf_centroids;
+                    index.codecs = (0..meta.nlist)
+                        .map(|_| RaBitQCodec::new(meta.d, meta.nbits, meta.is_inner_product))
+                        .collect();
+
+                    if meta.use_sq8 {
+                        index.sq8_quantizers = (0..meta.nlist).map(|c| {
+                            let mut sq8 = SQ8Quantizer::new(meta.d);
+                            if c < meta.ivf_sq8_vmin.len() && c < meta.ivf_sq8_vmax.len() {
+                                sq8.vmin = meta.ivf_sq8_vmin[c].clone();
+                                sq8.vmax = meta.ivf_sq8_vmax[c].clone();
+                                sq8.scale = (0..meta.d).map(|j| (sq8.vmax[j] - sq8.vmin[j]) / 255.0).collect();
+                            }
+                            Some(sq8)
+                        }).collect();
+                    }
+
+                    let mut cluster_counts = vec![0usize; meta.nlist];
+                    if let Ok(cf) = index.cf(CF_CLUSTER_META) {
+                        for c in 0..meta.nlist {
+                            let meta_key = (c as u16).to_le_bytes();
+                            if let Ok(Some(val)) = index.db.get_cf(cf, &meta_key[..]) {
+                                if let Ok(cm) = bincode::deserialize::<ClusterMeta>(&val) {
+                                    cluster_counts[c] = cm.count as usize;
+                                }
+                            }
+                        }
+                    }
+
+                    let mut cluster_offsets = vec![0usize; meta.nlist + 1];
+                    let mut offset = 0usize;
+                    for c in 0..meta.nlist {
+                        cluster_offsets[c] = offset;
+                        offset += cluster_counts[c];
+                    }
+                    *cluster_offsets.last_mut().unwrap() = offset;
+
+                    index.cluster_counts = cluster_counts;
+                    index.cluster_offsets = cluster_offsets;
+                }
+            }
+        }
+
+        Ok(index)
     }
 
     /// 从内存 IVF 索引构建 RocksDB IVF 索引
@@ -499,6 +553,10 @@ impl RocksDBIVFIndex {
             .cf_handle(name)
             .ok_or_else(|| format!("Column Family '{}' 不存在", name))
     }
+
+    pub fn ntotal(&self) -> usize {
+        self.ntotal
+    }
 }
 
 // ==================== TurboQuant IVF 持久化索引 ====================
@@ -590,11 +648,7 @@ impl RocksDBTQIVFIndex {
         )
         .map_err(|e| format!("打开RocksDB失败: {}", e))?;
 
-        let d_rotated = crate::utils::next_power_of_2(128);
-        let rotation = crate::hadamard::HadamardRotation::new(128, 12345);
-        let quantizer = crate::lloyd_max::LloydMaxQuantizer::new(d_rotated, 4);
-
-        Ok(Self {
+        let mut index = Self {
             db,
             d: 0,
             nlist: 0,
@@ -602,12 +656,65 @@ impl RocksDBTQIVFIndex {
             use_sq8: false,
             ntotal: 0,
             centroids: vec![],
-            quantizer,
-            rotation,
+            quantizer: crate::lloyd_max::LloydMaxQuantizer::new(128, 4),
+            rotation: crate::hadamard::HadamardRotation::new(128, 12345),
             sq8_quantizers: vec![],
             cluster_counts: vec![],
             cluster_offsets: vec![],
-        })
+        };
+
+        if let Ok(meta_bytes) = index.db.get(b"meta") {
+            if let Some(bytes) = meta_bytes {
+                if let Ok(meta) = bincode::deserialize::<crate::store::IndexMeta>(&bytes) {
+                    let d_rotated = crate::utils::next_power_of_2(meta.d);
+                    index.d = meta.d;
+                    index.nlist = meta.nlist;
+                    index.nbits = meta.nbits;
+                    index.use_sq8 = meta.use_sq8;
+                    index.ntotal = meta.ntotal;
+                    index.quantizer = crate::lloyd_max::LloydMaxQuantizer::new(d_rotated, meta.nbits);
+                    index.rotation = crate::hadamard::HadamardRotation::new(meta.d, meta.hadamard_seed);
+                    index.centroids = meta.ivf_centroids;
+
+                    if meta.use_sq8 {
+                        index.sq8_quantizers = (0..meta.nlist).map(|c| {
+                            let mut sq8 = SQ8Quantizer::new(meta.d);
+                            if c < meta.ivf_sq8_vmin.len() && c < meta.ivf_sq8_vmax.len() {
+                                sq8.vmin = meta.ivf_sq8_vmin[c].clone();
+                                sq8.vmax = meta.ivf_sq8_vmax[c].clone();
+                                sq8.scale = (0..meta.d).map(|j| (sq8.vmax[j] - sq8.vmin[j]) / 255.0).collect();
+                            }
+                            Some(sq8)
+                        }).collect();
+                    }
+
+                    let mut cluster_counts = vec![0usize; meta.nlist];
+                    if let Ok(cf) = index.cf(CF_CLUSTER_META) {
+                        for c in 0..meta.nlist {
+                            let meta_key = (c as u16).to_le_bytes();
+                            if let Ok(Some(val)) = index.db.get_cf(cf, &meta_key[..]) {
+                                if let Ok(cm) = bincode::deserialize::<ClusterMeta>(&val) {
+                                    cluster_counts[c] = cm.count as usize;
+                                }
+                            }
+                        }
+                    }
+
+                    let mut cluster_offsets = vec![0usize; meta.nlist + 1];
+                    let mut offset = 0usize;
+                    for c in 0..meta.nlist {
+                        cluster_offsets[c] = offset;
+                        offset += cluster_counts[c];
+                    }
+                    *cluster_offsets.last_mut().unwrap() = offset;
+
+                    index.cluster_counts = cluster_counts;
+                    index.cluster_offsets = cluster_offsets;
+                }
+            }
+        }
+
+        Ok(index)
     }
 
     pub fn build_from_ivf(&mut self, index: &crate::ivf::TurboQuantIVFIndex) -> Result<(), String> {

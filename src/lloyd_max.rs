@@ -483,7 +483,7 @@ impl LloydMaxQuantizer {
     fn decode_index_from_byte(&self, byte_val: u8, _byte_idx: usize, bit: usize) -> u8 {
         let i = _byte_idx * 8 + bit;
         let bit_offset = i * self.nbits;
-        let byte_offset = bit_offset >> 3;
+        let _byte_offset = bit_offset >> 3;
         let bit_shift = bit_offset & 7;
         let mask = ((1u16 << self.nbits) - 1) as u16;
         let mut packed = byte_val as u16;

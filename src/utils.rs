@@ -169,45 +169,6 @@ pub fn sq8_distance_simd(code: &[u8], query: &[f32], vmin: &[f32], scale: &[f32]
     dist
 }
 
-#[inline(always)]
-pub fn split_lut_distance_simd(code: &[u8], lo_lut: &[[f32; 16]], hi_lut: &[[f32; 16]], code_sz: usize) -> f32 {
-    let mut dist = 0.0f32;
-    let mut j = 0;
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        use std::arch::aarch64::*;
-        let mut vsum = vdupq_f32(0.0);
-        while j + 4 <= code_sz {
-            for k in 0..4 {
-                let idx = j + k;
-                let byte = code[idx] as usize;
-                dist += lo_lut[idx][byte & 0xF] + hi_lut[idx][byte >> 4];
-            }
-            j += 4;
-        }
-    }
-
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        while j + 4 <= code_sz {
-            for k in 0..4 {
-                let idx = j + k;
-                let byte = code[idx] as usize;
-                dist += lo_lut[idx][byte & 0xF] + hi_lut[idx][byte >> 4];
-            }
-            j += 4;
-        }
-    }
-
-    while j < code_sz {
-        let byte = code[j] as usize;
-        dist += lo_lut[j][byte & 0xF] + hi_lut[j][byte >> 4];
-        j += 1;
-    }
-    dist
-}
-
 /// 计算向量的 L2 范数平方
 ///
 /// # 参数
@@ -238,12 +199,46 @@ pub fn l2_norm(x: &[f32]) -> f32 {
 /// # 说明
 /// 归一化后向量 L2 范数为 1，适合余弦相似度计算
 pub fn l2_normalize(x: &mut [f32]) {
-    let norm = l2_norm(x);
+    let norm = l2_norm_simd(x);
     if norm > 1e-10 {
+        let inv_norm = 1.0 / norm;
         for v in x.iter_mut() {
-            *v /= norm;
+            *v *= inv_norm;
         }
     }
+}
+
+#[inline(always)]
+pub fn l2_norm_simd(x: &[f32]) -> f32 {
+    let n = x.len();
+    let mut sum = 0.0f32;
+    let mut i = 0;
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        use std::arch::aarch64::*;
+        let mut vsum = vdupq_f32(0.0);
+        while i + 4 <= n {
+            let vx = vld1q_f32(x.as_ptr().add(i));
+            vsum = vfmaq_f32(vsum, vx, vx);
+            i += 4;
+        }
+        sum = vaddvq_f32(vsum);
+    }
+
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        while i + 4 <= n {
+            sum += x[i] * x[i] + x[i + 1] * x[i + 1] + x[i + 2] * x[i + 2] + x[i + 3] * x[i + 3];
+            i += 4;
+        }
+    }
+
+    while i < n {
+        sum += x[i] * x[i];
+        i += 1;
+    }
+    sum.sqrt()
 }
 
 /// 计算大于等于 n 的最小 2 的幂
@@ -406,11 +401,9 @@ pub fn compute_ground_truth(data: &[f32], queries: &[f32], n_data: usize, n_quer
     let mut gt = Vec::with_capacity(n_queries);
     for q in 0..n_queries {
         let query = &queries[q * d..(q + 1) * d];
-        // 计算所有距离
         let mut dists: Vec<(f32, usize)> = (0..n_data)
-            .map(|i| (l2_distance(query, &data[i * d..(i + 1) * d]), i))
+            .map(|i| (l2_distance_simd(query, &data[i * d..(i + 1) * d]), i))
             .collect();
-        // 快速选择前 k 个
         dists.select_nth_unstable_by(k, |a, b| a.0.partial_cmp(&b.0).unwrap());
         dists.truncate(k);
         gt.push(dists.iter().map(|&(_, i)| i).collect());

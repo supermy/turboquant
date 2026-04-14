@@ -298,7 +298,7 @@ impl TurboQuantServer {
 
     pub fn run(self) -> Result<(), String> {
         let engine = Arc::new(VectorEngineService::new(self.d));
-        let query_url = self.query_url.clone();
+        let _query_url = self.query_url.clone();
         let write_url = self.write_url.clone();
         let notify_url = self.notify_url.clone();
 
@@ -395,11 +395,11 @@ impl TurboQuantServer {
                 Ok(msg) => {
                     let req: Result<WriteRequest, _> = bincode::deserialize(msg.as_slice());
                     let resp = match req {
-                        Ok(WriteRequest::Insert { vectors, n, ids }) => {
+                        Ok(WriteRequest::Insert { vectors, n, ids: _ }) => {
                             let inserted_ids = engine.insert(&vectors, n as usize);
                             WriteResponse::Inserted { ids: inserted_ids }
                         }
-                        Ok(WriteRequest::Delete { ids }) => {
+                        Ok(WriteRequest::Delete { ids: _ }) => {
                             WriteResponse::Deleted { count: 0 }
                         }
                         Ok(WriteRequest::BuildIVFIndex { nlist, index_type, quantization }) => {

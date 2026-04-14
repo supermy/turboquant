@@ -17,26 +17,26 @@
 - **C++ SIMD 引擎** — NEON (ARM) / AVX2 (x86) 距离计算内核 + CompressedSecondaryCache
 - **NNG 服务化** — 独立 Query/Write/Notify Socket，延迟隔离
 
-## 性能基准 (SIFT Small 10K×128D)
+## 性能基准 (SIFT Small 10K×128D, 真实数据)
 
 ### IVF-TurboQuant vs IVF-RaBitQ
 
 | 方法 | QPS | Recall@10 | P50 延迟 | vs RaBitQ IVF |
 |------|-----|-----------|---------|--------------|
-| **TQ-IVF-256 np=8** | **6876** | 90.2% | 138μs | 2.7x QPS |
-| **TQ-IVF-256 np=16** | **5150** | 97.1% | 188μs | 3.7x QPS |
-| **TQ-IVF-256 np=32** | **3534** | 99.1% | 278μs | 4.8x QPS |
-| TQ-IVF-64 np=8 | 3869 | 97.5% | 249μs | 1.6x QPS |
-| TQ-IVF-64 np=16 | 2293 | 99.4% | 422μs | 1.7x QPS |
-| TQ-IVF-64 np=32 | 1487 | 99.4% | 660μs | 2.1x QPS |
-| RaBitQ IVF-256 np=8 | 2560 | 90.1% | 368μs | baseline |
-| RaBitQ IVF-256 np=16 | 1386 | 96.7% | 682μs | baseline |
-| RaBitQ IVF-256 np=32 | 731 | 98.4% | 1303μs | baseline |
-| RaBitQ Flat+SQ8 | 3773 | 93.1% | 252μs | - |
-| TQ 4bit+SQ8 (Flat) | 812 | 98.7% | 1179μs | - |
-| Persisted np=8 | 2392 | 96.7% | 397μs | - |
+| **TQ-IVF-256 np=16** | **4409** | 97.1% | 206μs | 🏆 3.8x QPS |
+| **TQ-IVF-256 np=8** | **4317** | 90.2% | 173μs | 1.9x QPS |
+| **TQ-IVF-256 np=32** | **3036** | 99.1% | 307μs | 4.7x QPS |
+| TQ-IVF-64 np=8 | 3311 | 97.5% | 279μs | 1.4x QPS |
+| TQ-IVF-64 np=16 | 1968 | 99.4% | 469μs | 1.7x QPS |
+| TQ-IVF-64 np=32 | 1302 | 99.4% | 734μs | 2.1x QPS |
+| RaBitQ IVF-256 np=8 | 2272 | 90.1% | 399μs | baseline |
+| RaBitQ IVF-256 np=16 | 1168 | 96.7% | 755μs | baseline |
+| RaBitQ IVF-256 np=32 | 651 | 98.4% | 1437μs | baseline |
+| RaBitQ Flat+SQ8 | 3125 | 93.1% | 285μs | - |
+| TQ 4bit+SQ8 (Flat) | 766 | 98.7% | 1217μs | - |
+| Persisted np=8 | 2203 | 96.7% | 421μs | - |
 
-> 测试环境: Apple M1, d=128, nb=10000, nq=100, k=10
+> 测试环境: Apple M1, d=128, nb=10000, nq=100, k=10, 10轮取平均
 
 ## 快速开始
 
@@ -193,12 +193,12 @@ let response: QueryResponse = bincode::deserialize(reply.as_slice())?;
 
 | 场景 | 推荐索引 | nlist | nprobe | refine_factor | 预期 QPS | Recall |
 |------|---------|-------|--------|---------------|---------|--------|
-| 低延迟优先 | TQ-IVF-256 | 256 | 8 | 5 | ~6800 | 90% |
-| 均衡 | TQ-IVF-256 | 256 | 16 | 10 | ~5100 | 97% |
-| 高召回率 | TQ-IVF-256 | 256 | 32 | 10 | ~3500 | 99% |
-| 极致召回率 | TQ-IVF-64 | 64 | 16 | 10 | ~2300 | 99.4% |
-| 极致压缩 | RaBitQ Flat | - | - | 10 | ~3700 | 93% |
-| 持久化查询 | RocksDB TQ-IVF | 256 | 8 | 10 | ~2400 | 97% |
+| 低延迟优先 | TQ-IVF-256 | 256 | 8 | 5 | ~4300 | 90% |
+| 均衡 | TQ-IVF-256 | 256 | 16 | 10 | ~4400 | 97% |
+| 高召回率 | TQ-IVF-256 | 256 | 32 | 10 | ~3000 | 99% |
+| 极致召回率 | TQ-IVF-64 | 64 | 16 | 10 | ~2000 | 99.4% |
+| 极致压缩 | RaBitQ Flat | - | - | 10 | ~3100 | 93% |
+| 持久化查询 | RocksDB TQ-IVF | 256 | 8 | 10 | ~2200 | 97% |
 
 **nlist 选择**: 建议 `sqrt(nb)`，如 10K 向量 → nlist=100, 100K → nlist=316, 1M → nlist=1000
 
@@ -332,7 +332,8 @@ SQ8 精炼重排
 | `l2_distance_simd` | NEON vfmaq | L2 距离 4-wide SIMD |
 | `sq8_distance_simd` | NEON vfmaq | SQ8 解码+距离 4-wide |
 | `dot_product_simd` | NEON vfmaq | 点积 4-wide SIMD |
-| `split_lut_distance_simd` | NEON | Split LUT 距离计算 |
+| `l2_norm_simd` | NEON vfmaq | L2 范数 4-wide SIMD |
+| `l2_normalize` | NEON + inv_norm | 乘法替代除法 |
 | `nearest_clusters` | select_nth_unstable | O(n) 替代 O(n log n) 排序 |
 
 ### RocksDB 优化

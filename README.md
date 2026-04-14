@@ -50,6 +50,159 @@ cargo test --release
 cargo run --release --bin siftsmall_qps
 ```
 
+## 使用指南
+
+### 1. 内存索引 (纯内存，最高 QPS)
+
+#### RaBitQ Flat + SQ8
+
+```rust
+use turboquant::{RaBitQFlatIndex, SQ8Quantizer};
+
+let d = 128;
+let nb = 10000;
+
+// 创建索引 (1-bit 量化 + SQ8 精炼)
+let mut index = RaBitQFlatIndex::new(d, true);
+
+// 训练 (计算质心 + SQ8 参数)
+let data: Vec<f32> = vec![0.0; nb * d]; // 你的向量数据
+index.train(&data, nb);
+
+// 添加向量
+index.add(&data, nb);
+
+// 搜索
+let query: Vec<f32> = vec![0.0; d];
+let k = 10;
+let results = index.search(&query, 1, k, 10); // refine_factor=10
+// results[0] = [(id, distance), ...]
+```
+
+#### TurboQuant IVF + SQ8 (推荐，最高 QPS + Recall)
+
+```rust
+use turboquant::TurboQuantIVFIndex;
+
+let d = 128;
+let nb = 100000;
+let nlist = 256; // 聚类数，建议 sqrt(nb)
+
+// 创建索引 (4-bit 量化 + SQ8 精炼)
+let mut index = TurboQuantIVFIndex::new(d, nlist, 4, true);
+
+// 训练 (KMeans 聚类 + SQ8 参数)
+index.train(&data, nb);
+
+// 添加向量
+index.add(&data, nb);
+
+// 搜索
+let nprobe = 16; // 搜索的聚类数，越大越精确但越慢
+let refine_factor = 10; // SQ8 精炼倍数
+let results = index.search(&query, 1, k, nprobe, refine_factor);
+```
+
+#### RaBitQ IVF + SQ8
+
+```rust
+use turboquant::RaBitQIVFIndex;
+
+let d = 128;
+let nlist = 64;
+
+// 创建索引 (1-bit 量化 + SQ8 精炼)
+let mut index = RaBitQIVFIndex::new(d, nlist, 1, false, true);
+//                                      d    nlist  nb_bits  is_inner_product  use_sq8
+
+// 训练 + 添加 + 搜索 (同上)
+index.train(&data, nb);
+index.add(&data, nb);
+let results = index.search(&query, 1, k, 8, 10);
+```
+
+### 2. 持久化索引 (RocksDB，支持增量写入)
+
+#### RaBitQ IVF 持久化
+
+```rust
+use turboquant::RocksDBIVFIndex;
+use std::path::PathBuf;
+
+// 打开/创建 RocksDB 存储
+let mut db_index = RocksDBIVFIndex::open(&PathBuf::from("./data/rabitq_ivf"))?;
+
+// 从内存索引构建
+db_index.build_from_ivf(&memory_index)?;
+
+// 直接查询 (无需加载到内存)
+let results = db_index.search(&query, k, nprobe, refine_factor);
+```
+
+#### TurboQuant IVF 持久化
+
+```rust
+use turboquant::RocksDBTQIVFIndex;
+
+let mut db_index = RocksDBTQIVFIndex::open(&PathBuf::from("./data/tq_ivf"))?;
+db_index.build_from_ivf(&tq_memory_index)?;
+
+let results = db_index.search(&query, k, nprobe, refine_factor);
+```
+
+### 3. NNG 服务模式
+
+```rust
+use turboquant::TurboQuantServer;
+
+// 创建服务 (d=128)
+let server = TurboQuantServer::new(128)
+    .with_workers(4)
+    .with_query_url("tcp://127.0.0.1:5555")
+    .with_write_url("tcp://127.0.0.1:5556")
+    .with_notify_url("tcp://127.0.0.1:5557");
+
+server.run()?;
+```
+
+#### 客户端查询
+
+```rust
+use nng::Socket;
+
+let sock = Socket::new(nng::Protocol::Req0)?;
+sock.dial("tcp://127.0.0.1:5555")?;
+
+let request = QueryRequest::IVFSearch {
+    query: vec![0.0; 128],
+    k: 10,
+    nprobe: 16,
+    refine_factor: 10,
+};
+
+let mut msg = nng::Message::new();
+msg.push_back(&bincode::serialize(&request)?);
+sock.send(msg)?;
+
+let reply = sock.recv()?;
+let response: QueryResponse = bincode::deserialize(reply.as_slice())?;
+```
+
+### 4. 参数选择指南
+
+| 场景 | 推荐索引 | nlist | nprobe | refine_factor | 预期 QPS | Recall |
+|------|---------|-------|--------|---------------|---------|--------|
+| 低延迟优先 | TQ-IVF-256 | 256 | 8 | 5 | ~6800 | 90% |
+| 均衡 | TQ-IVF-256 | 256 | 16 | 10 | ~5100 | 97% |
+| 高召回率 | TQ-IVF-256 | 256 | 32 | 10 | ~3500 | 99% |
+| 极致召回率 | TQ-IVF-64 | 64 | 16 | 10 | ~2300 | 99.4% |
+| 极致压缩 | RaBitQ Flat | - | - | 10 | ~3700 | 93% |
+| 持久化查询 | RocksDB TQ-IVF | 256 | 8 | 10 | ~2400 | 97% |
+
+**nlist 选择**: 建议 `sqrt(nb)`，如 10K 向量 → nlist=100, 100K → nlist=316, 1M → nlist=1000
+
+**nprobe 选择**: nprobe 越大召回率越高但 QPS 越低。通常 nprobe/nlist = 5%-10% 即可获得 95%+ 召回率
+
 ## 架构
 
 ```
@@ -89,11 +242,12 @@ turboquant/
 │   ├── sq8.rs                # SQ8 标量量化 + 预处理查询
 │   ├── hadamard.rs           # Hadamard 随机旋转
 │   ├── kmeans.rs             # KMeans 聚类 (buffer reuse)
-│   ├── ivf.rs                # IVF 倒排索引 (2-pass scan)
-│   ├── store.rs              # RocksDB 向量存储 (V1/V2 兼容)
-│   ├── ivf_store.rs          # IVF 专用 RocksDB 存储
+│   ├── ivf.rs                # IVF 倒排索引 (RaBitQ + TurboQuant)
+│   ├── store.rs              # RocksDB 向量存储 (V1/V2/V3 兼容)
+│   ├── ivf_store.rs          # IVF 专用 RocksDB 存储 (RaBitQ + TurboQuant)
 │   ├── vector_engine_ffi.rs  # C++ SIMD 引擎 FFI 桥接
-│   ├── utils.rs              # 工具函数 (prefetch, next_power_of_2)
+│   ├── server.rs             # NNG 服务端 (Query/Write/Notify)
+│   ├── utils.rs              # 工具函数 (prefetch, l2_normalize)
 │   └── bin/
 │       └── siftsmall_qps.rs  # SIFT Small QPS 基准测试
 ├── cpp/
@@ -102,7 +256,6 @@ turboquant/
 │   ├── vector_query_engine.cpp # C++ 查询引擎 + RocksDB 插件
 │   └── rocksdb_query_plugin.h # SST 分区/合并/压缩插件
 ├── build.rs                  # C++ 编译脚本
-├── plan.md                   # 优化计划
 └── tests/
     ├── store_test.rs         # 存储测试
     ├── siftsmall_test.rs     # SIFT 召回率测试
@@ -155,6 +308,15 @@ SQ8 精炼重排
 - **存储**: (d/2 + d) bytes/vector = 192B with SQ8 (d=128)
 - **召回率**: 98.7% (最高)
 
+### Split LUT 原理
+
+将 4-bit LUT 的 256 项表拆分为两个 16 项表，LUT 从 64KB 降至 8KB：
+
+```
+原始: lut[j][byte] = (centroids[lo] - query[2j])² + (centroids[hi] - query[2j+1])²
+拆分: lo_lut[j][byte & 0xF] + hi_lut[j][byte >> 4]  // 数学等价
+```
+
 ## RocksDB 优化
 
 | 优化 | 说明 | QPS 提升 |
@@ -164,6 +326,7 @@ SQ8 精炼重排
 | async_io | 异步预取 SST 数据 | +5-10% |
 | Ribbon Filter | 更省空间的布隆过滤器替代 | +3-5% |
 | kBinarySearchWithFirstKey | C++ 层延迟读取数据块 | +5-10% |
+| CompressedSecondaryCache | LZ4 压缩二级缓存 | 间接提升 |
 
 ## NNG 服务架构
 
@@ -181,7 +344,7 @@ Server ──NNG Pub0──→ Notify Socket (Pub0:5557) → 事件广播
 
 ## 参考文献
 
-1. **RaBitQ** — "RaBitQ: Quantization with Radix Trees for Scalable Vector Search" 
+1. **RaBitQ** — "RaBitQ: Quantization with Radix Trees for Scalable Vector Search"
 2. **TurboQuant** — "TurboQuant: Online Vector Quantization with Near-optimal Distortion Rate", Zandieh et al., ICLR 2026
 3. **PolarQuant** — "PolarQuant: Quantizing KV Caches with Polar Transformation", Han et al., AISTATS 2026
 

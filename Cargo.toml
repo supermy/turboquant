@@ -35,10 +35,9 @@ harness = false
 
 [profile.release]
 opt-level = 3
-lto = "fat"
+lto = "thin"
 codegen-units = 1
 strip = true
-panic = "abort"
 
 [profile.dev]
 opt-level = 0

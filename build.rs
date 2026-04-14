@@ -5,19 +5,36 @@ fn main() {
     let rocksdb_src = find_rocksdb_src();
     let rocksdb_include = rocksdb_src.join("include");
 
-    cc::Build::new()
-        .cpp(true)
+    let mut build = cc::Build::new();
+    build.cpp(true)
         .file("cpp/vector_query_engine.cpp")
         .include(&rocksdb_include)
         .include("cpp")
         .flag("-std=c++17")
         .flag("-O3")
-        .flag_if_supported("-march=native")
-        .flag_if_supported("-D__STDC_FORMAT_MACROS")
-        .compile("vector_engine");
+        .flag_if_supported("-D__STDC_FORMAT_MACROS");
+
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+
+    if target_os == "windows" {
+        build.flag_if_supported("/std:c++17");
+    } else {
+        if target_arch == "x86_64" {
+            build.flag_if_supported("-msse4.2");
+        } else if target_arch == "aarch64" {
+            build.flag_if_supported("-march=armv8-a+simd");
+        }
+    }
+
+    build.compile("vector_engine");
 
     println!("cargo:rerun-if-changed=cpp/");
     println!("cargo:rustc-link-lib=static=vector_engine");
+
+    if target_os == "windows" {
+        println!("cargo:rustc-link-lib=shlwapi");
+    }
 }
 
 fn find_rocksdb_src() -> PathBuf {
@@ -58,5 +75,9 @@ fn find_rocksdb_src() -> PathBuf {
         }
     }
 
-    PathBuf::from("/usr/local")
+    if cfg!(target_os = "windows") {
+        PathBuf::from("C:/rocksdb")
+    } else {
+        PathBuf::from("/usr/local")
+    }
 }

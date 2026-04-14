@@ -1,8 +1,10 @@
 # TurboQuant - 高性能向量量化与检索引擎
 
+[![CI](https://github.com/user/turboquant/actions/workflows/ci.yml/badge.svg)](https://github.com/user/turboquant/actions/workflows/ci.yml)
 [![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 [![C++](https://img.shields.io/badge/C++-17-blue.svg)](https://isocpp.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-green.svg)]()
 
 基于 **RaBitQ** 和 **TurboQuant** 算法的高性能向量量化与近似最近邻 (ANN) 检索引擎，使用 Rust + C++ SIMD + RocksDB 持久化。
 
@@ -10,12 +12,13 @@
 
 - **RaBitQ 1-bit 量化** — 极致压缩，16KB LUT 常驻 L1 cache
 - **TurboQuant 4-bit 量化** — Split LUT (8KB) L1 常驻，IVF 场景下 QPS 4.8x RaBitQ
-- **NEON SIMD 加速** — L2/SQ8/Split-LUT 距离计算使用 ARM NEON 指令
+- **跨平台 SIMD 加速** — NEON (ARM) / AVX2 (x86_64) / 标量回退，自动选择最优路径
 - **IVF 索引** — 倒排文件索引，支持 RaBitQ 和 TurboQuant 两种量化
 - **SQ8 精炼** — 8-bit 标量量化重排，大幅提升召回率
 - **RocksDB 持久化** — HyperClockCache + PinnableSlice 零拷贝 + async_io + Ribbon Filter
 - **C++ SIMD 引擎** — NEON (ARM) / AVX2 (x86) 距离计算内核 + CompressedSecondaryCache
 - **NNG 服务化** — 独立 Query/Write/Notify Socket，延迟隔离
+- **跨平台支持** — Linux / macOS / Windows，x86_64 / aarch64
 
 ## 性能基准 (SIFT Small 10K×128D, 真实数据)
 
@@ -40,6 +43,16 @@
 
 ## 快速开始
 
+### 前置依赖
+
+| 平台 | 依赖 |
+|------|------|
+| Linux | `sudo apt install build-essential libgflags-dev libsnappy-dev zlib1g-dev libbz2-dev liblz4-dev libzstd-dev` |
+| macOS | Xcode Command Line Tools (`xcode-select --install`) |
+| Windows | Visual Studio Build Tools + C++17 支持 |
+
+### 构建
+
 ```bash
 # 构建
 cargo build --release
@@ -47,8 +60,12 @@ cargo build --release
 # 运行测试
 cargo test --release
 
-# SIFT Small QPS 基准测试
-cargo run --release --bin siftsmall_qps
+# SIFT Small QPS 基准测试 (指定数据目录)
+cargo run --release --bin siftsmall_qps [DATA_DIR]
+
+# 环境变量
+export ROCKSDB_SRC_DIR=/path/to/rocksdb  # 可选: 指定 RocksDB 源码路径
+export SIFT_DATA_DIR=/path/to/siftsmall  # 可选: 指定 SIFT 数据路径
 ```
 
 ## 使用指南
@@ -325,16 +342,17 @@ SQ8 精炼重排
 
 ## 性能优化
 
-### Rust SIMD 加速
+### 跨平台 SIMD 加速
 
-| 函数 | 优化 | 说明 |
-|------|------|------|
-| `l2_distance_simd` | NEON vfmaq | L2 距离 4-wide SIMD |
-| `sq8_distance_simd` | NEON vfmaq | SQ8 解码+距离 4-wide |
-| `dot_product_simd` | NEON vfmaq | 点积 4-wide SIMD |
-| `l2_norm_simd` | NEON vfmaq | L2 范数 4-wide SIMD |
-| `l2_normalize` | NEON + inv_norm | 乘法替代除法 |
-| `nearest_clusters` | select_nth_unstable | O(n) 替代 O(n log n) 排序 |
+| 函数 | aarch64 (NEON) | x86_64 (AVX2) | 通用回退 |
+|------|----------------|----------------|----------|
+| `l2_distance_simd` | 4-wide vfmaq | 8-wide fmadd | 4-wide 标量 |
+| `sq8_distance_simd` | 4-wide vfmaq | 4-wide 标量 | 4-wide 标量 |
+| `dot_product_simd` | 4-wide vfmaq | 8-wide fmadd | 4-wide 标量 |
+| `l2_norm_simd` | 4-wide vfmaq | 8-wide fmadd | 4-wide 标量 |
+| `l2_normalize` | NEON + inv_norm | AVX2 + inv_norm | 标量 + inv_norm |
+| `nearest_clusters` | select_nth_unstable | select_nth_unstable | select_nth_unstable |
+| `prefetch_read` | prfm (asm) | _mm_prefetch (SSE) | no-op |
 
 ### RocksDB 优化
 

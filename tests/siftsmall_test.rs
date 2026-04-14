@@ -16,8 +16,10 @@ fn compute_recall_sift(result: &[usize], gt: &[i32], k: usize) -> f32 {
 
 #[test]
 fn test_siftsmall_recall_and_qps() {
-    let data_dir = Path::new("/Users/moyong/project/ai/models/data/siftsmall");
-    if !data_dir.exists() { println!("跳过测试: 数据目录不存在"); return; }
+    let data_dir = std::env::var("SIFT_DATA_DIR")
+        .map(|p| Path::new(&p).to_path_buf())
+        .unwrap_or_else(|_| Path::new("/Users/moyong/project/ai/models/data/siftsmall").to_path_buf());
+    if !data_dir.exists() { println!("跳过测试: 数据目录不存在 (设置 SIFT_DATA_DIR 环境变量)"); return; }
 
     let dataset = SiftSmallDataset::load(data_dir).unwrap();
     let k = 10;

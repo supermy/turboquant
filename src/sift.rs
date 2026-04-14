@@ -134,9 +134,11 @@ mod tests {
 
     #[test]
     fn test_load_siftsmall() {
-        let dir = Path::new("/Users/moyong/project/ai/models/data/siftsmall");
+        let dir = std::env::var("SIFT_DATA_DIR")
+            .map(|p| Path::new(&p).to_path_buf())
+            .unwrap_or_else(|_| Path::new("/Users/moyong/project/ai/models/data/siftsmall").to_path_buf());
         if !dir.exists() { return; }
-        let ds = SiftSmallDataset::load(dir).unwrap();
+        let ds = SiftSmallDataset::load(&dir).unwrap();
         println!("SIFT Small: {} base({}D) {} query({}D) gt({})",
                  ds.nb, ds.d, ds.nq, ds.d, ds.k);
         assert_eq!(ds.nb, 10000);

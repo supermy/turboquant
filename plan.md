@@ -1739,6 +1739,18 @@ Split LUT: [f32; 16] × 64 × 2 = 8KB
 | `utils.rs` | compute_ground_truth 使用标量 l2_distance | ✅ 已改为 l2_distance_simd |
 | `server.rs` | LoadIndex 未实现 | ✅ 已实现 |
 | `ivf.rs` | early_stop_threshold 未使用 | ✅ 已清理 |
+
+### Phase 9: 跨平台兼容性改造 (2026-04-15)
+
+| 项目 | 状态 | 说明 |
+|------|------|------|
+| Rust SIMD 跨平台 | ✅ | NEON (aarch64) + AVX2 (x86_64) + 标量回退 |
+| prefetch_read 跨平台 | ✅ | prfm (aarch64) + _mm_prefetch (x86_64/SSE) + no-op |
+| build.rs 跨平台 | ✅ | 移除 -march=native, 按架构选择指令集 |
+| C++ alloca 跨平台 | ✅ | Windows 使用 _alloca, 其他使用 alloca |
+| 硬编码路径修复 | ✅ | 命令行参数 + 环境变量 + 默认路径 |
+| GitHub Actions CI | ✅ | Linux/macOS/Windows 三平台自动构建 |
+| README 文档更新 | ✅ | 跨平台说明 + 依赖安装 + SIMD 对比表 |
 | `vector_query_engine.cpp` | 未集成到 Rust | 添加 FFI 调用路径 |
 
 ---

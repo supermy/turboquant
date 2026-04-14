@@ -19,13 +19,22 @@ fn compute_recall(result: &[(usize, f32)], gt: &[i32], k: usize) -> f32 {
 }
 
 fn main() {
-    let data_dir = Path::new("/Users/moyong/project/ai/models/data/siftsmall");
+    let data_dir = std::env::args().nth(1)
+        .map(|p| Path::new(&p).to_path_buf())
+        .unwrap_or_else(|| {
+            let default = Path::new("/Users/moyong/project/ai/models/data/siftsmall");
+            if default.exists() {
+                default.to_path_buf()
+            } else {
+                Path::new("data/siftsmall").to_path_buf()
+            }
+        });
     if !data_dir.exists() {
-        eprintln!("siftsmall data not found at {:?}", data_dir);
+        eprintln!("siftsmall data not found at {:?}\nUsage: siftsmall_qps [DATA_DIR]", data_dir);
         std::process::exit(1);
     }
 
-    let ds = SiftSmallDataset::load(data_dir).unwrap();
+    let ds = SiftSmallDataset::load(&data_dir).unwrap();
     println!("SIFT Small: {} base x {}D, {} queries", ds.nb, ds.d, ds.nq);
 
     let d = ds.d;

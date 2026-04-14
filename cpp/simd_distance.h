@@ -3,7 +3,15 @@
 #include <cstdint>
 #include <cstddef>
 #include <cmath>
+#include <cstdlib>
+
+#if defined(_WIN32) || defined(_WIN64)
+#include <malloc.h>
+#define VQ_ALLOCA _alloca
+#else
 #include <alloca.h>
+#define VQ_ALLOCA alloca
+#endif
 
 #if defined(__aarch64__) || defined(__ARM_NEON)
 #include <arm_neon.h>
@@ -68,7 +76,7 @@ inline void build_rabitq_lut(
     float sum_q = 0.0f;
     int base_size = (d + 7) / 8;
 
-    float* rotated_q = (float*)alloca(d * sizeof(float));
+    float* rotated_q = (float*)VQ_ALLOCA(d * sizeof(float));
 
     if (centroid) {
         for (int i = 0; i < d; i++) {

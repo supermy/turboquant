@@ -1,0 +1,140 @@
+@startuml PolarQuant 时序图
+
+!define RECTANGLE class
+
+skinparam sequence {
+    ArrowColor Black
+    ActorBorderColor Black
+    LifeLineBorderColor Black
+    LifeLineBackgroundColor White
+    
+    ParticipantBorderColor Black
+    ParticipantBackgroundColor LightBlue
+    ParticipantFontSize 12
+    ParticipantFontColor Black
+    
+    ActorBackgroundColor LightGreen
+    ActorFontColor Black
+    ActorFontSize 12
+}
+
+title PolarQuant 压缩/解压 时序图
+
+actor "用户/调用者" as User
+participant "PolarQuant\n主量化类" as PQ
+participant "PolarQuantConfig\n配置类" as Config
+participant "随机正交矩阵\ngenerator" as Rot
+participant "极坐标变换\nutils" as Polar
+participant "Lloyd-Max\n量化器" as Lloyd
+participant "CompressedVector\n压缩向量" as CV
+
+== 初始化阶段 ==
+
+User -> Config: 创建配置
+activate Config
+Config --> User: config(dimension, radius_bits, angle_bits)
+deactivate Config
+
+User -> PQ: PolarQuant(config)
+activate PQ
+PQ -> Rot: random_orthogonal_matrix(d, seed)
+activate Rot
+Rot --> PQ: rotation_matrix Q
+deactivate Rot
+
+PQ -> Lloyd: compute_lloyd_max_centroids(α, β, bits)
+activate Lloyd
+Lloyd --> PQ: angle_centroids
+deactivate Lloyd
+
+PQ --> User: quantizer 就绪
+deactivate PQ
+
+== 压缩阶段 ==
+
+User -> PQ: compress(x)
+activate PQ
+
+note right: 步骤1: 随机旋转
+PQ -> Rot: _rotate(x)
+activate Rot
+Rot --> PQ: x_rotated = Q @ x
+deactivate Rot
+
+note right: 步骤2: 极坐标变换
+PQ -> Polar: cartesian_to_polar(x_rotated)
+activate Polar
+Polar --> PQ: (r, angles)
+deactivate Polar
+
+note right: 步骤3: 半径量化
+PQ -> PQ: _quantize_radius(r)
+activate PQ #LightGreen
+PQ --> PQ: radius_idx (对数尺度)
+deactivate PQ
+
+note right: 步骤4: 角度量化
+PQ -> Lloyd: lloyd_max_quantize(angles, centroids)
+activate Lloyd
+Lloyd --> PQ: angle_indices
+deactivate Lloyd
+
+PQ -> CV: CompressedVector(radius_idx, angle_indices)
+activate CV
+CV --> PQ: compressed
+deactivate CV
+
+PQ --> User: compressed vector
+deactivate PQ
+
+== 解压阶段 ==
+
+User -> PQ: decompress(compressed)
+activate PQ
+
+note right: 步骤1: 反量化半径
+PQ -> PQ: _dequantize_radius(radius_idx)
+activate PQ #LightGreen
+PQ --> PQ: r
+deactivate PQ
+
+note right: 步骤2: 反量化角度
+PQ -> Lloyd: lloyd_max_dequantize(angle_indices, centroids)
+activate Lloyd
+Lloyd --> PQ: angles
+deactivate Lloyd
+
+note right: 步骤3: 极坐标转笛卡尔
+PQ -> Polar: polar_to_cartesian(r, angles)
+activate Polar
+Polar --> PQ: x_rotated
+deactivate Polar
+
+note right: 步骤4: 逆旋转
+PQ -> Rot: _inverse_rotate(x_rotated)
+activate Rot
+Rot --> PQ: x = Qᵀ @ x_rotated
+deactivate Rot
+
+PQ --> User: x_reconstructed
+deactivate PQ
+
+== 批处理阶段 (可选) ==
+
+User -> PQ: PolarQuantBatch(PQ)
+activate PQ
+PQ --> User: batch_processor
+deactivate PQ
+
+User -> PQ: compress_batch(X)
+activate PQ
+loop 对每个向量 x in X
+    PQ -> PQ: compress(x)
+    activate PQ #LightYellow
+    PQ --> PQ: compressed
+    deactivate PQ
+end
+PQ --> User: [compressed_vectors]
+deactivate PQ
+
+@enduml

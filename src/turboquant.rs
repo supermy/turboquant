@@ -15,6 +15,8 @@
 
 use std::collections::BinaryHeap;
 
+use rayon::prelude::*;
+
 use crate::hadamard::HadamardRotation;
 use crate::lloyd_max::LloydMaxQuantizer;
 use crate::sq8::SQ8Quantizer;
@@ -143,79 +145,150 @@ impl TurboQuantFlatIndex {
     /// 3. 粗排: Lloyd-Max 距离计算
     /// 4. 精排: SQ8 距离计算 (可选)
     pub fn search(&self, queries: &[f32], n: usize, k: usize, refine_factor: usize) -> Vec<Vec<(usize, f32)>> {
-        // 步骤 1: 归一化查询
         let mut x_normalized = queries.to_vec();
         for i in 0..n {
             l2_normalize(&mut x_normalized[i * self.d..(i + 1) * self.d]);
         }
 
-        // 步骤 2: Hadamard 旋转
         let x_rotated = self.rotation.apply_batch(n, &x_normalized);
         let code_sz = self.quantizer.code_size();
+        let d_out = self.rotation.d_out;
 
-        let mut results = Vec::with_capacity(n);
+        let results: Vec<Vec<(usize, f32)>> = (0..n)
+            .into_par_iter()
+            .map(|q| {
+                let query = &x_rotated[q * d_out..(q + 1) * d_out];
 
-        for q in 0..n {
-            let query = &x_rotated[q * self.rotation.d_out..(q + 1) * self.rotation.d_out];
+                let k1 = if self.sq8.is_some() {
+                    (k * refine_factor).min(self.ntotal)
+                } else {
+                    k
+                };
 
-            // 步骤 3: 粗排 - 使用 Lloyd-Max 距离
-            let k1 = if self.sq8.is_some() {
-                (k * refine_factor).min(self.ntotal)
-            } else {
-                k
-            };
+                let nbits = self.quantizer.nbits;
+                let use_split_lut = nbits == 4;
+                let use_lut = nbits == 1 || nbits == 2 || nbits == 8;
 
-            let mut heap: BinaryHeap<(FloatOrd, usize)> = BinaryHeap::with_capacity(k1);
+                let mut heap: BinaryHeap<(FloatOrd, usize)> = BinaryHeap::with_capacity(k1);
 
-            for i in 0..self.ntotal {
-                let code = &self.codes[i * code_sz..(i + 1) * code_sz];
-                let dist = self.quantizer.compute_distance(code, query);
+                if use_split_lut {
+                    let (lo_lut, hi_lut) = self.quantizer.build_split_lut(query);
+                    let code_sz = self.quantizer.code_size();
+                    let chunk_size = 16usize;
+                    let n_chunks = (code_sz + chunk_size - 1) / chunk_size;
 
-                if heap.len() < k1 {
-                    heap.push((FloatOrd(dist), i));
-                } else if dist < heap.peek().unwrap().0 .0 {
-                    heap.pop();
-                    heap.push((FloatOrd(dist), i));
-                }
-            }
+                    for i in 0..self.ntotal {
+                        let code = &self.codes[i * code_sz..(i + 1) * code_sz];
+                        let mut dist = 0.0f32;
+                        for chunk_idx in 0..n_chunks {
+                            let start = chunk_idx * chunk_size;
+                            let end = (start + chunk_size).min(code_sz);
+                            for j in start..end {
+                                let byte = code[j] as usize;
+                                dist += lo_lut[j][byte & 0xF] + hi_lut[j][byte >> 4];
+                            }
+                            if heap.len() >= k1 && dist > heap.peek().unwrap().0 .0 {
+                                dist = f32::INFINITY;
+                                break;
+                            }
+                        }
+                        if dist.is_finite() {
+                            if heap.len() < k1 {
+                                heap.push((FloatOrd(dist), i));
+                            } else if dist < heap.peek().unwrap().0 .0 {
+                                heap.pop();
+                                heap.push((FloatOrd(dist), i));
+                            }
+                        }
+                    }
+                } else if use_lut {
+                    let chunk_size = 16usize;
+                    let n_chunks = (code_sz + chunk_size - 1) / chunk_size;
 
-            let candidates: Vec<(f32, usize)> = heap.into_iter().map(|(FloatOrd(d), i)| (d, i)).collect();
+                    let mut chunk_luts: Vec<Vec<[f32; 256]>> = Vec::with_capacity(n_chunks);
+                    for chunk_idx in 0..n_chunks {
+                        let start = chunk_idx * chunk_size;
+                        let end = (start + chunk_size).min(code_sz);
+                        let mut lut = Vec::with_capacity(end - start);
+                        self.quantizer.build_distance_lut_range_into(query, start, end, &mut lut);
+                        chunk_luts.push(lut);
+                    }
 
-            // 步骤 4: 精排 - 使用 SQ8 距离 (可选)
-            let mut final_heap: BinaryHeap<(FloatOrd, usize)> = BinaryHeap::with_capacity(k);
+                    for i in 0..self.ntotal {
+                        let code = &self.codes[i * code_sz..(i + 1) * code_sz];
+                        let mut dist = 0.0f32;
+                        for chunk_idx in 0..n_chunks {
+                            let start = chunk_idx * chunk_size;
+                            let end = (start + chunk_size).min(code_sz);
+                            let lut = &chunk_luts[chunk_idx];
+                            for j in start..end {
+                                dist += lut[j - start][code[j] as usize];
+                            }
+                            if heap.len() >= k1 && dist > heap.peek().unwrap().0 .0 {
+                                dist = f32::INFINITY;
+                                break;
+                            }
+                        }
+                        if dist.is_finite() {
+                            if heap.len() < k1 {
+                                heap.push((FloatOrd(dist), i));
+                            } else if dist < heap.peek().unwrap().0 .0 {
+                                heap.pop();
+                                heap.push((FloatOrd(dist), i));
+                            }
+                        }
+                    }
+                } else {
+                    for i in 0..self.ntotal {
+                        let code = &self.codes[i * code_sz..(i + 1) * code_sz];
+                        let dist = self.quantizer.compute_distance(code, query);
 
-            if let Some(ref sq8) = self.sq8 {
-                let sq8_sz = sq8.code_size();
-                let orig_query = &queries[q * self.d..(q + 1) * self.d];
-                for (_, idx) in &candidates {
-                    let sq8_code = &self.sq8_codes[*idx * sq8_sz..(*idx + 1) * sq8_sz];
-                    let refined_dist = sq8.compute_distance(sq8_code, orig_query);
-
-                    if final_heap.len() < k {
-                        final_heap.push((FloatOrd(refined_dist), *idx));
-                    } else if refined_dist < final_heap.peek().unwrap().0 .0 {
-                        final_heap.pop();
-                        final_heap.push((FloatOrd(refined_dist), *idx));
+                        if heap.len() < k1 {
+                            heap.push((FloatOrd(dist), i));
+                        } else if dist < heap.peek().unwrap().0 .0 {
+                            heap.pop();
+                            heap.push((FloatOrd(dist), i));
+                        }
                     }
                 }
-            } else {
-                for (dist, idx) in candidates {
-                    if final_heap.len() < k {
-                        final_heap.push((FloatOrd(dist), idx));
-                    } else if dist < final_heap.peek().unwrap().0 .0 {
-                        final_heap.pop();
-                        final_heap.push((FloatOrd(dist), idx));
+
+                let candidates: Vec<(f32, usize)> = heap.into_iter().map(|(FloatOrd(d), i)| (d, i)).collect();
+
+                let mut final_heap: BinaryHeap<(FloatOrd, usize)> = BinaryHeap::with_capacity(k);
+
+                if let Some(ref sq8) = self.sq8 {
+                    let sq8_sz = sq8.code_size();
+                    let orig_query = &queries[q * self.d..(q + 1) * self.d];
+                    for (_, idx) in &candidates {
+                        let sq8_code = &self.sq8_codes[*idx * sq8_sz..(*idx + 1) * sq8_sz];
+                        let refined_dist = sq8.compute_distance(sq8_code, orig_query);
+
+                        if final_heap.len() < k {
+                            final_heap.push((FloatOrd(refined_dist), *idx));
+                        } else if refined_dist < final_heap.peek().unwrap().0 .0 {
+                            final_heap.pop();
+                            final_heap.push((FloatOrd(refined_dist), *idx));
+                        }
+                    }
+                } else {
+                    for (dist, idx) in candidates {
+                        if final_heap.len() < k {
+                            final_heap.push((FloatOrd(dist), idx));
+                        } else if dist < final_heap.peek().unwrap().0 .0 {
+                            final_heap.pop();
+                            final_heap.push((FloatOrd(dist), idx));
+                        }
                     }
                 }
-            }
 
-            let mut result: Vec<(usize, f32)> = final_heap
-                .into_iter()
-                .map(|(FloatOrd(d), i)| (i, d))
-                .collect();
-            result.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-            results.push(result);
-        }
+                let mut result: Vec<(usize, f32)> = final_heap
+                    .into_iter()
+                    .map(|(FloatOrd(d), i)| (i, d))
+                    .collect();
+                result.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+                result
+            })
+            .collect();
 
         results
     }

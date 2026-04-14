@@ -281,6 +281,216 @@ impl LloydMaxQuantizer {
         }
         dist
     }
+
+    /// 构建查询向量的字节级查找表
+    ///
+    /// 对于 4-bit 量化，每字节包含 2 个索引。
+    /// 预计算每个字节值对距离的贡献，查询时直接查表。
+    ///
+    /// # 返回值
+    /// lookup[byte_idx][byte_val] = 该字节对距离平方的贡献
+    pub fn build_distance_lut(&self, query: &[f32]) -> Vec<[f32; 256]> {
+        let code_sz = self.code_size();
+        let mut lookup = Vec::with_capacity(code_sz);
+
+        if self.nbits == 4 {
+            for byte_idx in 0..code_sz {
+                let mut table = [0.0f32; 256];
+                for byte_val in 0u32..256 {
+                    let idx_lo = (byte_val & 0x0F) as usize;
+                    let idx_hi = ((byte_val >> 4) & 0x0F) as usize;
+                    let dim_lo = byte_idx * 2;
+                    let dim_hi = byte_idx * 2 + 1;
+                    let mut acc = 0.0f32;
+                    if dim_lo < self.d {
+                        let diff = self.centroids[idx_lo] - query[dim_lo];
+                        acc += diff * diff;
+                    }
+                    if dim_hi < self.d {
+                        let diff = self.centroids[idx_hi] - query[dim_hi];
+                        acc += diff * diff;
+                    }
+                    table[byte_val as usize] = acc;
+                }
+                lookup.push(table);
+            }
+        } else {
+            for byte_idx in 0..code_sz {
+                let mut table = [0.0f32; 256];
+                for byte_val in 0u32..256 {
+                    let mut acc = 0.0f32;
+                    for bit in 0..8 {
+                        let dim = byte_idx * 8 + bit;
+                        if dim * self.nbits / 8 >= code_sz {
+                            break;
+                        }
+                        if dim < self.d {
+                            let idx = self.decode_index_from_byte(byte_val as u8, byte_idx, bit);
+                            let diff = self.centroids[idx as usize] - query[dim];
+                            acc += diff * diff;
+                        }
+                    }
+                    table[byte_val as usize] = acc;
+                }
+                lookup.push(table);
+            }
+        }
+
+        lookup
+    }
+
+    pub fn build_distance_lut_into(&self, query: &[f32], buf: &mut Vec<[f32; 256]>) {
+        let code_sz = self.code_size();
+        if buf.len() < code_sz {
+            buf.resize(code_sz, [0.0f32; 256]);
+        }
+
+        if self.nbits == 4 {
+            for byte_idx in 0..code_sz {
+                let table = &mut buf[byte_idx];
+                for byte_val in 0u32..256 {
+                    let idx_lo = (byte_val & 0x0F) as usize;
+                    let idx_hi = ((byte_val >> 4) & 0x0F) as usize;
+                    let dim_lo = byte_idx * 2;
+                    let dim_hi = byte_idx * 2 + 1;
+                    let mut acc = 0.0f32;
+                    if dim_lo < self.d {
+                        let diff = self.centroids[idx_lo] - query[dim_lo];
+                        acc += diff * diff;
+                    }
+                    if dim_hi < self.d {
+                        let diff = self.centroids[idx_hi] - query[dim_hi];
+                        acc += diff * diff;
+                    }
+                    table[byte_val as usize] = acc;
+                }
+            }
+        } else {
+            for byte_idx in 0..code_sz {
+                let table = &mut buf[byte_idx];
+                for byte_val in 0u32..256 {
+                    let mut acc = 0.0f32;
+                    for bit in 0..8 {
+                        let dim = byte_idx * 8 + bit;
+                        if dim * self.nbits / 8 >= code_sz {
+                            break;
+                        }
+                        if dim < self.d {
+                            let idx = self.decode_index_from_byte(byte_val as u8, byte_idx, bit);
+                            let diff = self.centroids[idx as usize] - query[dim];
+                            acc += diff * diff;
+                        }
+                    }
+                    table[byte_val as usize] = acc;
+                }
+            }
+        }
+    }
+
+    pub fn build_distance_lut_range_into(&self, query: &[f32], range_start: usize, range_end: usize, buf: &mut Vec<[f32; 256]>) {
+        let chunk_len = range_end - range_start;
+        if buf.len() < chunk_len {
+            buf.resize(chunk_len, [0.0f32; 256]);
+        }
+
+        if self.nbits == 4 {
+            for j in 0..chunk_len {
+                let byte_idx = range_start + j;
+                let table = &mut buf[j];
+                for byte_val in 0u32..256 {
+                    let idx_lo = (byte_val & 0x0F) as usize;
+                    let idx_hi = ((byte_val >> 4) & 0x0F) as usize;
+                    let dim_lo = byte_idx * 2;
+                    let dim_hi = byte_idx * 2 + 1;
+                    let mut acc = 0.0f32;
+                    if dim_lo < self.d {
+                        let diff = self.centroids[idx_lo] - query[dim_lo];
+                        acc += diff * diff;
+                    }
+                    if dim_hi < self.d {
+                        let diff = self.centroids[idx_hi] - query[dim_hi];
+                        acc += diff * diff;
+                    }
+                    table[byte_val as usize] = acc;
+                }
+            }
+        } else {
+            for j in 0..chunk_len {
+                let byte_idx = range_start + j;
+                let table = &mut buf[j];
+                for byte_val in 0u32..256 {
+                    let mut acc = 0.0f32;
+                    for bit in 0..8 {
+                        let dim = byte_idx * 8 + bit;
+                        if dim * self.nbits / 8 >= self.code_size() {
+                            break;
+                        }
+                        if dim < self.d {
+                            let idx = self.decode_index_from_byte(byte_val as u8, byte_idx, bit);
+                            let diff = self.centroids[idx as usize] - query[dim];
+                            acc += diff * diff;
+                        }
+                    }
+                    table[byte_val as usize] = acc;
+                }
+            }
+        }
+    }
+
+    pub fn build_split_lut(&self, query: &[f32]) -> (Vec<[f32; 16]>, Vec<[f32; 16]>) {
+        let code_sz = self.code_size();
+        let mut lo_lut = vec![[0.0f32; 16]; code_sz];
+        let mut hi_lut = vec![[0.0f32; 16]; code_sz];
+
+        if self.nbits == 4 {
+            for j in 0..code_sz {
+                let dim_lo = j * 2;
+                let dim_hi = j * 2 + 1;
+                for idx in 0..16usize {
+                    if dim_lo < self.d {
+                        let diff = self.centroids[idx] - query[dim_lo];
+                        lo_lut[j][idx] = diff * diff;
+                    }
+                    if dim_hi < self.d {
+                        let diff = self.centroids[idx] - query[dim_hi];
+                        hi_lut[j][idx] = diff * diff;
+                    }
+                }
+            }
+        }
+
+        (lo_lut, hi_lut)
+    }
+
+    pub fn compute_distance_with_split_lut(&self, code: &[u8], lo_lut: &[[f32; 16]], hi_lut: &[[f32; 16]]) -> f32 {
+        let mut dist = 0.0f32;
+        for j in 0..code.len() {
+            let byte = code[j] as usize;
+            dist += lo_lut[j][byte & 0xF] + hi_lut[j][byte >> 4];
+        }
+        dist
+    }
+
+    pub fn compute_distance_with_lut(&self, code: &[u8], lut: &[[f32; 256]]) -> f32 {
+        let mut dist = 0.0f32;
+        for byte_idx in 0..code.len() {
+            dist += lut[byte_idx][code[byte_idx] as usize];
+        }
+        dist
+    }
+
+    fn decode_index_from_byte(&self, byte_val: u8, _byte_idx: usize, bit: usize) -> u8 {
+        let i = _byte_idx * 8 + bit;
+        let bit_offset = i * self.nbits;
+        let byte_offset = bit_offset >> 3;
+        let bit_shift = bit_offset & 7;
+        let mask = ((1u16 << self.nbits) - 1) as u16;
+        let mut packed = byte_val as u16;
+        if bit_shift + self.nbits > 8 {
+            packed |= (byte_val as u16) << 8;
+        }
+        ((packed >> bit_shift) & mask) as u8
+    }
 }
 
 #[cfg(test)]

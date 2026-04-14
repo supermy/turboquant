@@ -87,7 +87,7 @@ fn test_persistence_qps_benchmark() {
 
         // 加载后查询
         let t4 = Instant::now();
-        let res2 = loaded.search(&queries, nq, k, 10);
+        let _res2 = loaded.search(&queries, nq, k, 10);
         let search2_ms = t4.elapsed().as_secs_f64() * 1000.0;
         let search2_qps = nq as f64 / (search2_ms / 1000.0);
 
@@ -149,7 +149,7 @@ fn test_persistence_qps_benchmark() {
         let load_ms = t3.elapsed().as_secs_f64() * 1000.0;
 
         let t4 = Instant::now();
-        let res2 = loaded.search(&queries, nq, k, 10);
+        let _res2 = loaded.search(&queries, nq, k, 10);
         let search2_ms = t4.elapsed().as_secs_f64() * 1000.0;
         let search2_qps = nq as f64 / (search2_ms / 1000.0);
 
@@ -212,7 +212,7 @@ fn test_persistence_qps_benchmark() {
         let load_ms = t3.elapsed().as_secs_f64() * 1000.0;
 
         let t4 = Instant::now();
-        let res2 = loaded.search(&queries, nq, k, 32, 10);
+        let _res2 = loaded.search(&queries, nq, k, 32, 10);
         let search2_ms = t4.elapsed().as_secs_f64() * 1000.0;
         let search2_qps = nq as f64 / (search2_ms / 1000.0);
 

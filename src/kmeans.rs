@@ -135,16 +135,21 @@ impl KMeans {
     /// # 返回值
     /// (距离, 聚类索引) 列表，按距离排序
     pub fn nearest_clusters(&self, x: &[f32], nprobe: usize) -> Vec<(f32, usize)> {
+        let mut buf = Vec::with_capacity(self.k);
+        self.nearest_clusters_into(x, nprobe, &mut buf);
+        buf
+    }
+
+    pub fn nearest_clusters_into(&self, x: &[f32], nprobe: usize, buf: &mut Vec<(f32, usize)>) {
         let nprobe = nprobe.min(self.k);
-        let mut dists: Vec<(f32, usize)> = (0..self.k)
-            .map(|i| (l2_distance(x, &self.centroids[i * self.d..(i + 1) * self.d]), i))
-            .collect();
+        buf.clear();
+        buf.extend((0..self.k)
+            .map(|i| (l2_distance(x, &self.centroids[i * self.d..(i + 1) * self.d]), i)));
         if nprobe < self.k {
-            dists.select_nth_unstable_by(nprobe, |a, b| a.0.partial_cmp(&b.0).unwrap());
+            buf.select_nth_unstable_by(nprobe, |a, b| a.0.partial_cmp(&b.0).unwrap());
         }
-        dists.truncate(nprobe);
-        dists.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-        dists
+        buf.truncate(nprobe);
+        buf.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
     }
 }
 

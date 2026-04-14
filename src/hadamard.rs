@@ -117,48 +117,44 @@ impl HadamardRotation {
     /// 6. FWHT
     /// 7. 缩放
     pub fn apply(&self, x: &[f32]) -> Vec<f32> {
-        assert!(x.len() >= self.d_in);
         let mut buf = vec![0.0f32; self.d_out];
-
-        // 第一轮: 符号翻转 + FWHT
-        for i in 0..self.d_in {
-            buf[i] = x[i] * self.signs1[i];
-        }
-        fwht_inplace(&mut buf);
-
-        // 第二轮: 符号翻转 + FWHT
-        for i in 0..self.d_out {
-            buf[i] *= self.signs2[i];
-        }
-        fwht_inplace(&mut buf);
-
-        // 第三轮: 符号翻转 + FWHT
-        for i in 0..self.d_out {
-            buf[i] *= self.signs3[i];
-        }
-        fwht_inplace(&mut buf);
-
-        // 缩放
-        for i in 0..self.d_out {
-            buf[i] *= self.scale;
-        }
-
+        self.apply_into(x, &mut buf);
         buf
     }
 
-    /// 批量应用 Hadamard 旋转
-    ///
-    /// # 参数
-    /// - `n`: 向量数量
-    /// - `x`: 输入向量数组 (n * d_in 个 f32)
-    ///
-    /// # 返回值
-    /// 旋转后的向量数组 (n * d_out 个 f32)
+    pub fn apply_into(&self, x: &[f32], buf: &mut [f32]) {
+        assert!(x.len() >= self.d_in);
+        assert!(buf.len() >= self.d_out);
+
+        for i in 0..self.d_in {
+            buf[i] = x[i] * self.signs1[i];
+        }
+        for i in self.d_in..self.d_out {
+            buf[i] = 0.0;
+        }
+        fwht_inplace(&mut buf[..self.d_out]);
+
+        for i in 0..self.d_out {
+            buf[i] *= self.signs2[i];
+        }
+        fwht_inplace(&mut buf[..self.d_out]);
+
+        for i in 0..self.d_out {
+            buf[i] *= self.signs3[i];
+        }
+        fwht_inplace(&mut buf[..self.d_out]);
+
+        for i in 0..self.d_out {
+            buf[i] *= self.scale;
+        }
+    }
+
     pub fn apply_batch(&self, n: usize, x: &[f32]) -> Vec<f32> {
         let mut result = vec![0.0f32; n * self.d_out];
+        let mut buf = vec![0.0f32; self.d_out];
         for i in 0..n {
-            let rotated = self.apply(&x[i * self.d_in..(i + 1) * self.d_in]);
-            result[i * self.d_out..(i + 1) * self.d_out].copy_from_slice(&rotated);
+            self.apply_into(&x[i * self.d_in..(i + 1) * self.d_in], &mut buf);
+            result[i * self.d_out..(i + 1) * self.d_out].copy_from_slice(&buf[..self.d_out]);
         }
         result
     }

@@ -98,6 +98,7 @@ pub fn l2_normalize(x: &mut [f32]) {
 ///
 /// # 示例
 /// ```
+/// use turboquant::next_power_of_2;
 /// assert_eq!(next_power_of_2(100), 128);
 /// assert_eq!(next_power_of_2(128), 128);
 /// assert_eq!(next_power_of_2(129), 256);
@@ -108,6 +109,18 @@ pub fn next_power_of_2(n: usize) -> usize {
         p *= 2;
     }
     p
+}
+
+#[inline(always)]
+pub unsafe fn prefetch_read(ptr: *const u8) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        std::arch::x86_64::_mm_prefetch::<3>(ptr as *const i8);
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) ptr);
+    }
 }
 
 /// 生成聚类数据 (模拟真实数据集)

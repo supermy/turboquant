@@ -11,6 +11,7 @@
 /// SQ8 标量量化器
 ///
 /// 每个维度独立量化，存储为 1 字节。
+#[derive(Clone)]
 pub struct SQ8Quantizer {
     /// 向量维度
     pub d: usize,
@@ -18,6 +19,8 @@ pub struct SQ8Quantizer {
     pub vmin: Vec<f32>,
     /// 每维最大值
     pub vmax: Vec<f32>,
+    /// 预计算 scale: (vmax - vmin) / 255.0
+    pub scale: Vec<f32>,
 }
 
 impl SQ8Quantizer {
@@ -30,6 +33,7 @@ impl SQ8Quantizer {
             d,
             vmin: vec![f32::MAX; d],
             vmax: vec![f32::MIN; d],
+            scale: vec![0.0; d],
         }
     }
 
@@ -59,6 +63,10 @@ impl SQ8Quantizer {
             if self.vmax[j] - self.vmin[j] < 1e-6 {
                 self.vmax[j] = self.vmin[j] + 1e-6;
             }
+        }
+
+        for j in 0..self.d {
+            self.scale[j] = (self.vmax[j] - self.vmin[j]) / 255.0;
         }
     }
 
@@ -92,8 +100,7 @@ impl SQ8Quantizer {
     /// - `x`: 输出向量
     pub fn decode(&self, code: &[u8], x: &mut [f32]) {
         for j in 0..self.d {
-            // 反量化
-            x[j] = self.vmin[j] + (code[j] as f32 / 255.0) * (self.vmax[j] - self.vmin[j]);
+            x[j] = self.vmin[j] + code[j] as f32 * self.scale[j];
         }
     }
 
@@ -108,12 +115,34 @@ impl SQ8Quantizer {
     pub fn compute_distance(&self, code: &[u8], query: &[f32]) -> f32 {
         let mut dist = 0.0f32;
         for j in 0..self.d {
-            // 反量化并计算距离
-            let decoded = self.vmin[j] + (code[j] as f32 / 255.0) * (self.vmax[j] - self.vmin[j]);
+            let decoded = self.vmin[j] + code[j] as f32 * self.scale[j];
             let diff = decoded - query[j];
             dist += diff * diff;
         }
         dist
+    }
+
+    pub fn compute_distance_preprocessed(&self, code: &[u8], query_preprocessed: &[f32]) -> f32 {
+        let mut dist = 0.0f32;
+        for j in 0..self.d {
+            let diff = code[j] as f32 - query_preprocessed[j];
+            dist += diff * diff;
+        }
+        dist * self.scale_sum_sq()
+    }
+
+    pub fn preprocess_query(&self, query: &[f32]) -> Vec<f32> {
+        query.iter().zip(self.vmin.iter()).zip(self.scale.iter())
+            .map(|((q, v), s)| (q - v) / s)
+            .collect()
+    }
+
+    fn scale_sum_sq(&self) -> f32 {
+        let mut sum = 0.0f32;
+        for s in &self.scale {
+            sum += s * s;
+        }
+        sum / self.d as f32
     }
 }
 

@@ -5,6 +5,9 @@ edition = "2021"
 description = "High-performance vector quantization: TurboQuant + SQ8 and RaBitQ IVF + SQ8"
 license = "MIT"
 
+[build-dependencies]
+cc = { version = "1", features = ["parallel"] }
+
 [dependencies]
 rand = "0.8"
 rand_chacha = "0.3"
@@ -12,6 +15,10 @@ rand_distr = "0.4"
 rocksdb = "0.22"
 serde = { version = "1", features = ["derive"] }
 bincode = "1"
+rayon = "1.10"
+tempfile = "3"
+nng = "1.0"
+parking_lot = "0.12"
 
 [dev-dependencies]
 criterion = "0.5"
@@ -23,8 +30,8 @@ harness = false
 
 [profile.release]
 opt-level = 3
-lto = false
-codegen-units = 16
+lto = "fat"
+codegen-units = 1
 
 [profile.dev]
 opt-level = 0

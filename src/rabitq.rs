@@ -12,10 +12,11 @@
 //! - 1-bit: ~47%
 //! - 1-bit + SQ8: ~98%
 
+use rayon::prelude::*;
 use std::collections::BinaryHeap;
 
 use crate::sq8::SQ8Quantizer;
-use crate::utils::{l2_distance, l2_norm_sq, FloatOrd};
+use crate::utils::{l2_distance, l2_norm_sq, prefetch_read, FloatOrd};
 
 /// 向量符号因子
 ///
@@ -33,19 +34,30 @@ pub struct SignBitFactors {
 /// 存储查询相关的预计算值，加速距离计算。
 #[derive(Clone, Debug)]
 pub struct QueryFactorsData {
-    /// c1 = 2 / √d
     pub c1: f32,
-    /// c34 = Σ(qr - c) / √d
     pub c34: f32,
-    /// ||qr - c||²: 查询到质心的距离平方
     pub qr_to_c_l2sqr: f32,
-    /// qr - c: 查询减去质心
     pub rotated_q: Vec<f32>,
+    pub lookup: Vec<[f32; 256]>,
+}
+
+impl QueryFactorsData {
+    pub fn with_capacity(d: usize) -> Self {
+        let base_size = (d + 7) / 8;
+        Self {
+            c1: 0.0,
+            c34: 0.0,
+            qr_to_c_l2sqr: 0.0,
+            rotated_q: vec![0.0; d],
+            lookup: vec![[0.0f32; 256]; base_size],
+        }
+    }
 }
 
 /// RaBitQ 编解码器
 ///
 /// 实现向量到 1-bit 编码的转换和距离估计。
+#[derive(Clone)]
 pub struct RaBitQCodec {
     /// 向量维度
     pub d: usize,
@@ -72,6 +84,25 @@ impl RaBitQCodec {
         let base_size = (self.d + 7) / 8;
         let factor_size = std::mem::size_of::<SignBitFactors>();
         base_size + factor_size
+    }
+
+    /// 计算缓存行对齐的编码大小 (32 字节对齐)
+    ///
+    /// 对齐到 32 字节边界，确保每个编码不跨缓存行。
+    /// d=128 时: 原始 24B → 对齐 32B，每缓存行恰好 2 个向量。
+    pub fn code_size_aligned(&self) -> usize {
+        let raw = self.code_size();
+        (raw + 31) & !31
+    }
+
+    /// 计算符号位大小
+    pub fn signs_size(&self) -> usize {
+        (self.d + 7) / 8
+    }
+
+    /// 因子在编码中的偏移量
+    pub fn factors_offset(&self) -> usize {
+        (self.d + 7) / 8
     }
 
     /// 计算向量的中间值
@@ -145,15 +176,10 @@ impl RaBitQCodec {
             dp_multiplier: inv_dp_oo * sqrt_norm_l2,
         };
 
-        // 写入因子
+        // 写入因子 (safe: 使用 from_le_bytes 替代 unsafe 指针强转)
         let base_size = (self.d + 7) / 8;
-        let factors_bytes = unsafe {
-            std::slice::from_raw_parts(
-                &factors as *const SignBitFactors as *const u8,
-                std::mem::size_of::<SignBitFactors>(),
-            )
-        };
-        code[base_size..base_size + std::mem::size_of::<SignBitFactors>()].copy_from_slice(factors_bytes);
+        code[base_size..base_size + 4].copy_from_slice(&factors.or_minus_c_l2sqr.to_le_bytes());
+        code[base_size + 4..base_size + 8].copy_from_slice(&factors.dp_multiplier.to_le_bytes());
     }
 
     /// 计算距离
@@ -173,31 +199,100 @@ impl RaBitQCodec {
         query_fac: &QueryFactorsData,
     ) -> f32 {
         let base_size = (self.d + 7) / 8;
-        let factors = unsafe {
-            let ptr = code[base_size..].as_ptr() as *const SignBitFactors;
-            &*ptr
-        };
+        let or_minus_c_l2sqr = f32::from_le_bytes(
+            code[base_size..base_size + 4].try_into().unwrap(),
+        );
+        let dp_multiplier = f32::from_le_bytes(
+            code[base_size + 4..base_size + 8].try_into().unwrap(),
+        );
 
-        // 计算点积估计
         let mut dot_qo = 0.0f32;
-        for i in 0..self.d {
-            let bit = (code[i / 8] >> (i % 8)) & 1;
-            if bit != 0 {
-                dot_qo += query_fac.rotated_q[i];
+        if !query_fac.lookup.is_empty() {
+            for byte_idx in 0..base_size {
+                dot_qo += query_fac.lookup[byte_idx][code[byte_idx] as usize];
+            }
+        } else {
+            for i in 0..self.d {
+                let bit = (code[i / 8] >> (i % 8)) & 1;
+                if bit != 0 {
+                    dot_qo += query_fac.rotated_q[i];
+                }
             }
         }
 
         let final_dot = query_fac.c1 * dot_qo - query_fac.c34;
 
-        // 距离估计公式
-        let dist = factors.or_minus_c_l2sqr + query_fac.qr_to_c_l2sqr
-            - 2.0 * factors.dp_multiplier * final_dot;
+        let dist = or_minus_c_l2sqr + query_fac.qr_to_c_l2sqr
+            - 2.0 * dp_multiplier * final_dot;
 
         if self.is_inner_product {
             -0.5 * (dist - query_fac.qr_to_c_l2sqr)
         } else {
             dist.max(0.0)
         }
+    }
+
+    /// 仅使用符号位计算距离 (signs/factors 分离存储模式)
+    ///
+    /// 当 signs 和 factors 分开存储时，先读 signs 做粗排，
+    /// 只对候选向量读取 factors 做精确距离估计。
+    pub fn compute_distance_signs_only(
+        &self,
+        signs: &[u8],
+        query_fac: &QueryFactorsData,
+    ) -> f32 {
+        let base_size = (self.d + 7) / 8;
+        let mut dot_qo = 0.0f32;
+        if !query_fac.lookup.is_empty() {
+            for byte_idx in 0..base_size {
+                dot_qo += query_fac.lookup[byte_idx][signs[byte_idx] as usize];
+            }
+        } else {
+            for i in 0..self.d {
+                let bit = (signs[i / 8] >> (i % 8)) & 1;
+                if bit != 0 {
+                    dot_qo += query_fac.rotated_q[i];
+                }
+            }
+        }
+        dot_qo
+    }
+
+    /// 使用预计算的 dot_qo 和 factors 计算最终距离
+    pub fn compute_distance_with_factors(
+        &self,
+        dot_qo: f32,
+        or_minus_c_l2sqr: f32,
+        dp_multiplier: f32,
+        query_fac: &QueryFactorsData,
+    ) -> f32 {
+        let final_dot = query_fac.c1 * dot_qo - query_fac.c34;
+        let dist = or_minus_c_l2sqr + query_fac.qr_to_c_l2sqr
+            - 2.0 * dp_multiplier * final_dot;
+
+        if self.is_inner_product {
+            -0.5 * (dist - query_fac.qr_to_c_l2sqr)
+        } else {
+            dist.max(0.0)
+        }
+    }
+
+    /// 从编码中提取符号位引用
+    pub fn extract_signs<'a>(&self, code: &'a [u8]) -> &'a [u8] {
+        let base_size = self.signs_size();
+        &code[..base_size]
+    }
+
+    /// 从编码中提取 factors
+    pub fn extract_factors(&self, code: &[u8]) -> (f32, f32) {
+        let base_size = self.factors_offset();
+        let or_minus_c_l2sqr = f32::from_le_bytes(
+            code[base_size..base_size + 4].try_into().unwrap_or([0u8; 4]),
+        );
+        let dp_multiplier = f32::from_le_bytes(
+            code[base_size + 4..base_size + 8].try_into().unwrap_or([0u8; 4]),
+        );
+        (or_minus_c_l2sqr, dp_multiplier)
     }
 }
 
@@ -232,12 +327,76 @@ pub fn compute_query_factors(
     let inv_d = 1.0 / (d as f32).sqrt();
     let sum_q: f32 = rotated_q.iter().sum();
 
+    let base_size = (d + 7) / 8;
+    let mut lookup = Vec::with_capacity(base_size);
+    for byte_idx in 0..base_size {
+        let mut table = [0.0f32; 256];
+        for byte_val in 0u32..256 {
+            let mut acc = 0.0f32;
+            for bit in 0..8 {
+                let dim = byte_idx * 8 + bit;
+                if dim < d && (byte_val >> bit) & 1 != 0 {
+                    acc += rotated_q[dim];
+                }
+            }
+            table[byte_val as usize] = acc;
+        }
+        lookup.push(table);
+    }
+
     QueryFactorsData {
         c1: 2.0 * inv_d,
         c34: sum_q * inv_d,
         qr_to_c_l2sqr,
         rotated_q,
+        lookup,
     }
+}
+
+pub fn compute_query_factors_into(
+    query: &[f32],
+    d: usize,
+    centroid: Option<&[f32]>,
+    buf: &mut QueryFactorsData,
+) {
+    let mut qr_to_c_l2sqr = 0.0f32;
+    match centroid {
+        Some(c) => {
+            for i in 0..d {
+                let diff = query[i] - c[i];
+                buf.rotated_q[i] = diff;
+                qr_to_c_l2sqr += diff * diff;
+            }
+        }
+        None => {
+            for i in 0..d {
+                buf.rotated_q[i] = query[i];
+                qr_to_c_l2sqr += query[i] * query[i];
+            }
+        }
+    }
+
+    let inv_d = 1.0 / (d as f32).sqrt();
+    let sum_q: f32 = buf.rotated_q[..d].iter().sum();
+
+    let base_size = (d + 7) / 8;
+    for byte_idx in 0..base_size {
+        let table = &mut buf.lookup[byte_idx];
+        for byte_val in 0u32..256 {
+            let mut acc = 0.0f32;
+            for bit in 0..8 {
+                let dim = byte_idx * 8 + bit;
+                if dim < d && (byte_val >> bit) & 1 != 0 {
+                    acc += buf.rotated_q[dim];
+                }
+            }
+            table[byte_val as usize] = acc;
+        }
+    }
+
+    buf.c1 = 2.0 * inv_d;
+    buf.c34 = sum_q * inv_d;
+    buf.qr_to_c_l2sqr = qr_to_c_l2sqr;
 }
 
 /// RaBitQ Flat 索引
@@ -337,69 +496,75 @@ impl RaBitQFlatIndex {
     /// 2. 精排: SQ8 距离计算 (可选)
     pub fn search(&self, queries: &[f32], n: usize, k: usize, refine_factor: usize) -> Vec<Vec<(usize, f32)>> {
         let code_sz = self.codec.code_size();
-        let mut results = Vec::with_capacity(n);
 
-        for q in 0..n {
-            let query = &queries[q * self.d..(q + 1) * self.d];
-            let query_fac = compute_query_factors(query, self.d, Some(&self.centroid), self.is_inner_product);
+        let results: Vec<Vec<(usize, f32)>> = (0..n)
+            .into_par_iter()
+            .map(|q| {
+                let query = &queries[q * self.d..(q + 1) * self.d];
+                let mut query_fac = QueryFactorsData::with_capacity(self.d);
+                compute_query_factors_into(query, self.d, Some(&self.centroid), &mut query_fac);
 
-            // 粗排
-            let k1 = if self.sq8.is_some() {
-                (k * refine_factor).min(self.ntotal)
-            } else {
-                k
-            };
+                let k1 = if self.sq8.is_some() {
+                    (k * refine_factor).min(self.ntotal)
+                } else {
+                    k
+                };
 
-            let mut heap: BinaryHeap<(FloatOrd, usize)> = BinaryHeap::with_capacity(k1);
+                let mut heap: BinaryHeap<(FloatOrd, usize)> = BinaryHeap::with_capacity(k1);
 
-            for i in 0..self.ntotal {
-                let code = &self.codes[i * code_sz..(i + 1) * code_sz];
-                let dist = self.codec.compute_distance(code, &query_fac);
+                for i in 0..self.ntotal {
+                    if i + 2 < self.ntotal {
+                        unsafe {
+                            prefetch_read(self.codes.as_ptr().add((i + 1) * code_sz));
+                        }
+                    }
+                    let code = &self.codes[i * code_sz..(i + 1) * code_sz];
+                    let dist = self.codec.compute_distance(code, &query_fac);
 
-                if heap.len() < k1 {
-                    heap.push((FloatOrd(dist), i));
-                } else if dist < heap.peek().unwrap().0 .0 {
-                    heap.pop();
-                    heap.push((FloatOrd(dist), i));
-                }
-            }
-
-            let candidates: Vec<(f32, usize)> = heap.into_iter().map(|(FloatOrd(d), i)| (d, i)).collect();
-
-            // 精排
-            let mut final_heap: BinaryHeap<(FloatOrd, usize)> = BinaryHeap::with_capacity(k);
-
-            if let Some(ref sq8) = self.sq8 {
-                let sq8_sz = sq8.code_size();
-                for (_, idx) in &candidates {
-                    let sq8_code = &self.sq8_codes[*idx * sq8_sz..(*idx + 1) * sq8_sz];
-                    let refined_dist = sq8.compute_distance(sq8_code, query);
-
-                    if final_heap.len() < k {
-                        final_heap.push((FloatOrd(refined_dist), *idx));
-                    } else if refined_dist < final_heap.peek().unwrap().0 .0 {
-                        final_heap.pop();
-                        final_heap.push((FloatOrd(refined_dist), *idx));
+                    if heap.len() < k1 {
+                        heap.push((FloatOrd(dist), i));
+                    } else if dist < heap.peek().unwrap().0 .0 {
+                        heap.pop();
+                        heap.push((FloatOrd(dist), i));
                     }
                 }
-            } else {
-                for (dist, idx) in candidates {
-                    if final_heap.len() < k {
-                        final_heap.push((FloatOrd(dist), idx));
-                    } else if dist < final_heap.peek().unwrap().0 .0 {
-                        final_heap.pop();
-                        final_heap.push((FloatOrd(dist), idx));
+
+                let candidates: Vec<(f32, usize)> = heap.into_iter().map(|(FloatOrd(d), i)| (d, i)).collect();
+
+                let mut final_heap: BinaryHeap<(FloatOrd, usize)> = BinaryHeap::with_capacity(k);
+
+                if let Some(ref sq8) = self.sq8 {
+                    let sq8_sz = sq8.code_size();
+                    for (_, idx) in &candidates {
+                        let sq8_code = &self.sq8_codes[*idx * sq8_sz..(*idx + 1) * sq8_sz];
+                        let refined_dist = sq8.compute_distance(sq8_code, query);
+
+                        if final_heap.len() < k {
+                            final_heap.push((FloatOrd(refined_dist), *idx));
+                        } else if refined_dist < final_heap.peek().unwrap().0 .0 {
+                            final_heap.pop();
+                            final_heap.push((FloatOrd(refined_dist), *idx));
+                        }
+                    }
+                } else {
+                    for (dist, idx) in candidates {
+                        if final_heap.len() < k {
+                            final_heap.push((FloatOrd(dist), idx));
+                        } else if dist < final_heap.peek().unwrap().0 .0 {
+                            final_heap.pop();
+                            final_heap.push((FloatOrd(dist), idx));
+                        }
                     }
                 }
-            }
 
-            let mut result: Vec<(usize, f32)> = final_heap
-                .into_iter()
-                .map(|(FloatOrd(d), i)| (i, d))
-                .collect();
-            result.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-            results.push(result);
-        }
+                let mut result: Vec<(usize, f32)> = final_heap
+                    .into_iter()
+                    .map(|(FloatOrd(d), i)| (i, d))
+                    .collect();
+                result.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+                result
+            })
+            .collect();
 
         results
     }

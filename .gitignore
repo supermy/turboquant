@@ -1,9 +1,6 @@
 # Rust
 target/
-study/
-glm51/
-kimi25/
-idea/
+
 **/*.rs.bk
 *.pdb
 
@@ -17,9 +14,6 @@ __pycache__/
 dist/
 build/
 
-# FAISS
-faiss/*.index
-faiss/*.bin
 
 # IDE
 .idea/

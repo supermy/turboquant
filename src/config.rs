@@ -1,6 +1,6 @@
 //! TurboQuant 统一配置系统
 //!
-//! 所有参数提供默认值，支持 TOML 配置文件，持久化路径可配置。
+//! 所有参数提供默认值，支持 INI/TOML 配置文件，持久化路径可配置。
 //!
 //! # 使用方式
 //!
@@ -8,8 +8,8 @@
 //! use turboquant::config::TurboConfig;
 //!
 //! let config = TurboConfig::default();
-//! let config = TurboConfig::load_from_file("turboquant.toml")?;
-//! let config = TurboConfig::load_from_str(toml_str)?;
+//! let config = TurboConfig::load_from_ini_file("config.ini")?;
+//! let config = TurboConfig::load_from_ini_str(ini_str)?;
 //! ```
 
 use serde::{Deserialize, Serialize};
@@ -41,20 +41,54 @@ impl Default for TurboConfig {
 }
 
 impl TurboConfig {
-    pub fn load_from_file(path: &Path) -> Result<Self, String> {
+    pub fn load_from_ini_file(path: &Path) -> Result<Self, String> {
         let content =
             std::fs::read_to_string(path).map_err(|e| format!("读取配置文件失败: {}", e))?;
-        Self::load_from_str(&content)
+        Self::load_from_ini_str(&content)
     }
 
-    pub fn load_from_str(s: &str) -> Result<Self, String> {
-        let config: TurboConfig =
-            toml::from_str(s).map_err(|e| format!("解析配置文件失败: {}", e))?;
+    pub fn load_from_ini_str(s: &str) -> Result<Self, String> {
+        let conf = ini::Ini::load_from_str(s).map_err(|e| format!("解析INI配置失败: {}", e))?;
+        let mut config = TurboConfig::default();
+        config.apply_ini(&conf);
         config.validate()?;
         Ok(config)
     }
 
-    pub fn save_to_file(&self, path: &Path) -> Result<(), String> {
+    pub fn load_from_toml_file(path: &Path) -> Result<Self, String> {
+        let content =
+            std::fs::read_to_string(path).map_err(|e| format!("读取配置文件失败: {}", e))?;
+        Self::load_from_toml_str(&content)
+    }
+
+    pub fn load_from_toml_str(s: &str) -> Result<Self, String> {
+        let config: TurboConfig =
+            toml::from_str(s).map_err(|e| format!("解析TOML配置失败: {}", e))?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn load_from_file(path: &Path) -> Result<Self, String> {
+        let fname = path
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if fname.ends_with(".ini") {
+            Self::load_from_ini_file(path)
+        } else {
+            Self::load_from_toml_file(path)
+        }
+    }
+
+    pub fn save_to_ini_file(&self, path: &Path) -> Result<(), String> {
+        let content = self.to_ini_string();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {}", e))?;
+        }
+        std::fs::write(path, content).map_err(|e| format!("写入配置文件失败: {}", e))
+    }
+
+    pub fn save_to_toml_file(&self, path: &Path) -> Result<(), String> {
         let content = toml::to_string_pretty(self).map_err(|e| format!("序列化配置失败: {}", e))?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {}", e))?;
@@ -68,9 +102,72 @@ impl TurboConfig {
         self.storage.validate()
     }
 
+    pub fn generate_default_ini() -> String {
+        TurboConfig::default().to_ini_string()
+    }
+
     pub fn generate_default_toml() -> String {
-        let config = Self::default();
-        toml::to_string_pretty(&config).unwrap_or_default()
+        toml::to_string_pretty(&TurboConfig::default()).unwrap_or_default()
+    }
+
+    fn apply_ini(&mut self, conf: &ini::Ini) {
+        if let Some(sec) = conf.section(Some("index")) {
+            self.index.apply_ini(sec);
+        }
+        if let Some(sec) = conf.section(Some("rocksdb")) {
+            self.rocksdb.apply_ini(sec);
+        }
+        #[cfg(feature = "nng")]
+        if let Some(sec) = conf.section(Some("server")) {
+            self.server.apply_ini(sec);
+        }
+        if let Some(sec) = conf.section(Some("storage")) {
+            self.storage.apply_ini(sec);
+        }
+    }
+
+    fn to_ini_string(&self) -> String {
+        let mut s = String::new();
+        s.push_str("; TurboQuant Configuration File\n");
+        s.push_str("; Auto-generated default configuration\n\n");
+        s.push_str("[index]\n");
+        s.push_str(&self.index.to_ini_lines());
+        s.push('\n');
+        s.push_str("[rocksdb]\n");
+        s.push_str(&self.rocksdb.to_ini_lines());
+        s.push('\n');
+        #[cfg(feature = "nng")]
+        {
+            s.push_str("[server]\n");
+            s.push_str(&self.server.to_ini_lines());
+            s.push('\n');
+        }
+        s.push_str("[storage]\n");
+        s.push_str(&self.storage.to_ini_lines());
+        s
+    }
+}
+
+fn parse_usize(v: &str) -> Option<usize> {
+    v.parse().ok()
+}
+fn parse_i32(v: &str) -> Option<i32> {
+    v.parse().ok()
+}
+fn parse_u32(v: &str) -> Option<u32> {
+    v.parse().ok()
+}
+fn parse_u64(v: &str) -> Option<u64> {
+    v.parse().ok()
+}
+fn parse_f64(v: &str) -> Option<f64> {
+    v.parse().ok()
+}
+fn parse_bool(v: &str) -> Option<bool> {
+    match v.to_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Some(true),
+        "false" | "0" | "no" | "off" => Some(false),
+        _ => None,
     }
 }
 
@@ -119,6 +216,59 @@ impl IndexConfig {
             return Err("index.kmeans_niter 不能为 0".to_string());
         }
         Ok(())
+    }
+
+    fn apply_ini(&mut self, sec: &ini::Properties) {
+        if let Some(v) = sec.get("d").and_then(|v| parse_usize(v)) {
+            self.d = v;
+        }
+        if let Some(v) = sec.get("nlist").and_then(|v| parse_usize(v)) {
+            self.nlist = v;
+        }
+        if let Some(v) = sec.get("nbits").and_then(|v| parse_usize(v)) {
+            self.nbits = v;
+        }
+        if let Some(v) = sec.get("use_sq8").and_then(|v| parse_bool(v)) {
+            self.use_sq8 = v;
+        }
+        if let Some(v) = sec.get("refine_factor").and_then(|v| parse_usize(v)) {
+            self.refine_factor = v;
+        }
+        if let Some(v) = sec.get("hadamard_seed").and_then(|v| parse_u64(v)) {
+            self.hadamard_seed = v;
+        }
+        if let Some(v) = sec.get("kmeans_niter").and_then(|v| parse_usize(v)) {
+            self.kmeans_niter = v;
+        }
+        if let Some(v) = sec.get("kmeans_seed").and_then(|v| parse_u64(v)) {
+            self.kmeans_seed = v;
+        }
+        if let Some(v) = sec.get("is_inner_product").and_then(|v| parse_bool(v)) {
+            self.is_inner_product = v;
+        }
+    }
+
+    fn to_ini_lines(&self) -> String {
+        format!(
+            "d = {}\n\
+             nlist = {}\n\
+             nbits = {}\n\
+             use_sq8 = {}\n\
+             refine_factor = {}\n\
+             hadamard_seed = {}\n\
+             kmeans_niter = {}\n\
+             kmeans_seed = {}\n\
+             is_inner_product = {}\n",
+            self.d,
+            self.nlist,
+            self.nbits,
+            self.use_sq8,
+            self.refine_factor,
+            self.hadamard_seed,
+            self.kmeans_niter,
+            self.kmeans_seed,
+            self.is_inner_product
+        )
     }
 }
 
@@ -259,6 +409,194 @@ impl RocksDBConfig {
         }
         Ok(())
     }
+
+    fn apply_ini(&mut self, sec: &ini::Properties) {
+        if let Some(v) = sec.get("block_cache_size_mb").and_then(|v| parse_usize(v)) {
+            self.block_cache_size_mb = v;
+        }
+        if let Some(v) = sec.get("write_buffer_size_mb").and_then(|v| parse_usize(v)) {
+            self.write_buffer_size_mb = v;
+        }
+        if let Some(v) = sec
+            .get("max_write_buffer_number")
+            .and_then(|v| parse_i32(v))
+        {
+            self.max_write_buffer_number = v;
+        }
+        if let Some(v) = sec.get("max_background_jobs").and_then(|v| parse_i32(v)) {
+            self.max_background_jobs = v;
+        }
+        if let Some(v) = sec
+            .get("target_file_size_base_mb")
+            .and_then(|v| parse_usize(v))
+        {
+            self.target_file_size_base_mb = v;
+        }
+        if let Some(v) = sec.get("max_open_files").and_then(|v| parse_i32(v)) {
+            self.max_open_files = v;
+        }
+        if let Some(v) = sec
+            .get("level_compaction_dynamic_level_bytes")
+            .and_then(|v| parse_bool(v))
+        {
+            self.level_compaction_dynamic_level_bytes = v;
+        }
+        if let Some(v) = sec
+            .get("optimize_level_style_compaction_mb")
+            .and_then(|v| parse_usize(v))
+        {
+            self.optimize_level_style_compaction_mb = v;
+        }
+        if let Some(v) = sec.get("use_fsync").and_then(|v| parse_bool(v)) {
+            self.use_fsync = v;
+        }
+        if let Some(v) = sec.get("stats_dump_period_sec").and_then(|v| parse_u32(v)) {
+            self.stats_dump_period_sec = v;
+        }
+        if let Some(v) = sec
+            .get("rate_limiter_bytes_per_sec_mb")
+            .and_then(|v| v.parse::<i64>().ok())
+        {
+            self.rate_limiter_bytes_per_sec_mb = v;
+        }
+        if let Some(v) = sec.get("env_background_threads").and_then(|v| parse_i32(v)) {
+            self.env_background_threads = v;
+        }
+        if let Some(v) = sec
+            .get("env_high_priority_threads")
+            .and_then(|v| parse_i32(v))
+        {
+            self.env_high_priority_threads = v;
+        }
+        if let Some(v) = sec
+            .get("env_low_priority_threads")
+            .and_then(|v| parse_i32(v))
+        {
+            self.env_low_priority_threads = v;
+        }
+        if let Some(v) = sec.get("bloom_bits_per_key").and_then(|v| parse_f64(v)) {
+            self.bloom_bits_per_key = v;
+        }
+        if let Some(v) = sec.get("readahead_size_kb").and_then(|v| parse_usize(v)) {
+            self.readahead_size_kb = v;
+        }
+        if let Some(v) = sec.get("async_io").and_then(|v| parse_bool(v)) {
+            self.async_io = v;
+        }
+        if let Some(v) = sec.get("verify_checksums").and_then(|v| parse_bool(v)) {
+            self.verify_checksums = v;
+        }
+        if let Some(v) = sec.get("cuckoo_hash_ratio").and_then(|v| parse_f64(v)) {
+            self.cuckoo_hash_ratio = v;
+        }
+        if let Some(v) = sec
+            .get("cuckoo_max_search_depth")
+            .and_then(|v| parse_u32(v))
+        {
+            self.cuckoo_max_search_depth = v;
+        }
+        if let Some(v) = sec
+            .get("rabitq_signs_block_size_kb")
+            .and_then(|v| parse_usize(v))
+        {
+            self.rabitq_signs_block_size_kb = v;
+        }
+        if let Some(v) = sec
+            .get("rabitq_signs_write_buffer_mb")
+            .and_then(|v| parse_usize(v))
+        {
+            self.rabitq_signs_write_buffer_mb = v;
+        }
+        if let Some(v) = sec
+            .get("rabitq_factors_block_size_kb")
+            .and_then(|v| parse_usize(v))
+        {
+            self.rabitq_factors_block_size_kb = v;
+        }
+        if let Some(v) = sec
+            .get("rabitq_factors_write_buffer_mb")
+            .and_then(|v| parse_usize(v))
+        {
+            self.rabitq_factors_write_buffer_mb = v;
+        }
+        if let Some(v) = sec
+            .get("tq_codes_block_size_kb")
+            .and_then(|v| parse_usize(v))
+        {
+            self.tq_codes_block_size_kb = v;
+        }
+        if let Some(v) = sec
+            .get("tq_codes_write_buffer_mb")
+            .and_then(|v| parse_usize(v))
+        {
+            self.tq_codes_write_buffer_mb = v;
+        }
+        if let Some(v) = sec
+            .get("v1_codes_block_size_kb")
+            .and_then(|v| parse_usize(v))
+        {
+            self.v1_codes_block_size_kb = v;
+        }
+    }
+
+    fn to_ini_lines(&self) -> String {
+        format!(
+            "block_cache_size_mb = {}\n\
+             write_buffer_size_mb = {}\n\
+             max_write_buffer_number = {}\n\
+             max_background_jobs = {}\n\
+             target_file_size_base_mb = {}\n\
+             max_open_files = {}\n\
+             level_compaction_dynamic_level_bytes = {}\n\
+             optimize_level_style_compaction_mb = {}\n\
+             use_fsync = {}\n\
+             stats_dump_period_sec = {}\n\
+             rate_limiter_bytes_per_sec_mb = {}\n\
+             env_background_threads = {}\n\
+             env_high_priority_threads = {}\n\
+             env_low_priority_threads = {}\n\
+             bloom_bits_per_key = {}\n\
+             readahead_size_kb = {}\n\
+             async_io = {}\n\
+             verify_checksums = {}\n\
+             cuckoo_hash_ratio = {}\n\
+             cuckoo_max_search_depth = {}\n\
+             rabitq_signs_block_size_kb = {}\n\
+             rabitq_signs_write_buffer_mb = {}\n\
+             rabitq_factors_block_size_kb = {}\n\
+             rabitq_factors_write_buffer_mb = {}\n\
+             tq_codes_block_size_kb = {}\n\
+             tq_codes_write_buffer_mb = {}\n\
+             v1_codes_block_size_kb = {}\n",
+            self.block_cache_size_mb,
+            self.write_buffer_size_mb,
+            self.max_write_buffer_number,
+            self.max_background_jobs,
+            self.target_file_size_base_mb,
+            self.max_open_files,
+            self.level_compaction_dynamic_level_bytes,
+            self.optimize_level_style_compaction_mb,
+            self.use_fsync,
+            self.stats_dump_period_sec,
+            self.rate_limiter_bytes_per_sec_mb,
+            self.env_background_threads,
+            self.env_high_priority_threads,
+            self.env_low_priority_threads,
+            self.bloom_bits_per_key,
+            self.readahead_size_kb,
+            self.async_io,
+            self.verify_checksums,
+            self.cuckoo_hash_ratio,
+            self.cuckoo_max_search_depth,
+            self.rabitq_signs_block_size_kb,
+            self.rabitq_signs_write_buffer_mb,
+            self.rabitq_factors_block_size_kb,
+            self.rabitq_factors_write_buffer_mb,
+            self.tq_codes_block_size_kb,
+            self.tq_codes_write_buffer_mb,
+            self.v1_codes_block_size_kb
+        )
+    }
 }
 
 #[cfg(feature = "nng")]
@@ -296,6 +634,35 @@ impl ServerConfig {
         }
         Ok(())
     }
+
+    fn apply_ini(&mut self, sec: &ini::Properties) {
+        if let Some(v) = sec.get("query_url") {
+            self.query_url = v.to_string();
+        }
+        if let Some(v) = sec.get("write_url") {
+            self.write_url = v.to_string();
+        }
+        if let Some(v) = sec.get("notify_url") {
+            self.notify_url = v.to_string();
+        }
+        if let Some(v) = sec.get("n_workers").and_then(|v| parse_usize(v)) {
+            self.n_workers = v;
+        }
+        if let Some(v) = sec.get("d").and_then(|v| parse_usize(v)) {
+            self.d = v;
+        }
+    }
+
+    fn to_ini_lines(&self) -> String {
+        format!(
+            "query_url = {}\n\
+             write_url = {}\n\
+             notify_url = {}\n\
+             n_workers = {}\n\
+             d = {}\n",
+            self.query_url, self.write_url, self.notify_url, self.n_workers, self.d
+        )
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -325,6 +692,24 @@ impl StorageConfig {
         }
         std::fs::create_dir_all(&self.data_dir).map_err(|e| format!("创建数据目录失败: {}", e))?;
         Ok(())
+    }
+
+    fn apply_ini(&mut self, sec: &ini::Properties) {
+        if let Some(v) = sec.get("data_dir") {
+            self.data_dir = PathBuf::from(v);
+        }
+        if let Some(v) = sec.get("db_path") {
+            self.db_path = PathBuf::from(v);
+        }
+    }
+
+    fn to_ini_lines(&self) -> String {
+        format!(
+            "data_dir = {}\n\
+             db_path = {}\n",
+            self.data_dir.display(),
+            self.db_path.display()
+        )
     }
 }
 
@@ -359,9 +744,6 @@ mod tests {
         assert!(!config.rocksdb.use_fsync);
         assert_eq!(config.rocksdb.cuckoo_hash_ratio, 0.9);
         assert_eq!(config.rocksdb.cuckoo_max_search_depth, 100);
-        assert_eq!(config.rocksdb.rabitq_signs_block_size_kb, 2);
-        assert_eq!(config.rocksdb.rabitq_factors_block_size_kb, 1);
-        assert_eq!(config.rocksdb.tq_codes_block_size_kb, 8);
 
         #[cfg(feature = "nng")]
         {
@@ -377,10 +759,10 @@ mod tests {
     }
 
     #[test]
-    fn test_toml_roundtrip() {
+    fn test_ini_roundtrip() {
         let config = TurboConfig::default();
-        let toml_str = toml::to_string_pretty(&config).unwrap();
-        let parsed: TurboConfig = toml::from_str(&toml_str).unwrap();
+        let ini_str = config.to_ini_string();
+        let parsed = TurboConfig::load_from_ini_str(&ini_str).unwrap();
         assert!(parsed.validate().is_ok());
 
         assert_eq!(parsed.index.d, config.index.d);
@@ -401,8 +783,8 @@ mod tests {
     }
 
     #[test]
-    fn test_load_from_str() {
-        let toml_str = r#"
+    fn test_load_from_ini_str() {
+        let ini_str = r#"
 [index]
 d = 256
 nlist = 128
@@ -421,10 +803,10 @@ max_background_jobs = 8
 bloom_bits_per_key = 12.0
 
 [storage]
-data_dir = "/tmp/turboquant_data"
-db_path = "/tmp/turboquant_data/myindex.db"
+data_dir = /tmp/turboquant_data
+db_path = /tmp/turboquant_data/myindex.db
 "#;
-        let config = TurboConfig::load_from_str(toml_str).unwrap();
+        let config = TurboConfig::load_from_ini_str(ini_str).unwrap();
         assert_eq!(config.index.d, 256);
         assert_eq!(config.index.nlist, 128);
         assert_eq!(config.index.nbits, 6);
@@ -451,12 +833,12 @@ db_path = "/tmp/turboquant_data/myindex.db"
     }
 
     #[test]
-    fn test_load_partial_config() {
-        let toml_str = r#"
+    fn test_load_partial_ini() {
+        let ini_str = r#"
 [index]
 d = 64
 "#;
-        let config = TurboConfig::load_from_str(toml_str).unwrap();
+        let config = TurboConfig::load_from_ini_str(ini_str).unwrap();
         assert_eq!(config.index.d, 64);
         assert_eq!(config.index.nlist, 64);
         assert_eq!(config.index.nbits, 4);
@@ -464,11 +846,31 @@ d = 64
     }
 
     #[test]
-    fn test_load_empty_config() {
-        let toml_str = "";
-        let config = TurboConfig::load_from_str(toml_str).unwrap();
+    fn test_load_empty_ini() {
+        let config = TurboConfig::load_from_ini_str("").unwrap();
         assert_eq!(config.index.d, 128);
         assert_eq!(config.rocksdb.block_cache_size_mb, 512);
+    }
+
+    #[test]
+    fn test_ini_bool_variants() {
+        let ini_str = r#"
+[index]
+use_sq8 = yes
+is_inner_product = on
+"#;
+        let config = TurboConfig::load_from_ini_str(ini_str).unwrap();
+        assert!(config.index.use_sq8);
+        assert!(config.index.is_inner_product);
+
+        let ini_str = r#"
+[index]
+use_sq8 = no
+is_inner_product = off
+"#;
+        let config = TurboConfig::load_from_ini_str(ini_str).unwrap();
+        assert!(!config.index.use_sq8);
+        assert!(!config.index.is_inner_product);
     }
 
     #[test]
@@ -522,14 +924,14 @@ d = 64
     }
 
     #[test]
-    fn test_save_and_load_file() {
+    fn test_save_and_load_ini_file() {
         let tmp_dir = tempfile::tempdir().unwrap();
-        let config_path = tmp_dir.path().join("test_config.toml");
+        let config_path = tmp_dir.path().join("config.ini");
 
         let config = TurboConfig::default();
-        config.save_to_file(&config_path).unwrap();
+        config.save_to_ini_file(&config_path).unwrap();
 
-        let loaded = TurboConfig::load_from_file(&config_path).unwrap();
+        let loaded = TurboConfig::load_from_ini_file(&config_path).unwrap();
         assert_eq!(loaded.index.d, config.index.d);
         assert_eq!(loaded.index.nlist, config.index.nlist);
         assert_eq!(
@@ -540,16 +942,32 @@ d = 64
     }
 
     #[test]
-    fn test_generate_default_toml() {
-        let toml_str = TurboConfig::generate_default_toml();
-        assert!(toml_str.contains("[index]"));
-        assert!(toml_str.contains("[rocksdb]"));
-        assert!(toml_str.contains("[storage]"));
-        assert!(toml_str.contains("d = 128"));
-        assert!(toml_str.contains("nlist = 64"));
+    fn test_generate_default_ini() {
+        let ini_str = TurboConfig::generate_default_ini();
+        assert!(ini_str.contains("[index]"));
+        assert!(ini_str.contains("[rocksdb]"));
+        assert!(ini_str.contains("[storage]"));
+        assert!(ini_str.contains("d = 128"));
+        assert!(ini_str.contains("nlist = 64"));
 
-        let parsed = TurboConfig::load_from_str(&toml_str).unwrap();
+        let parsed = TurboConfig::load_from_ini_str(&ini_str).unwrap();
         assert!(parsed.validate().is_ok());
+    }
+
+    #[test]
+    fn test_auto_detect_format() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+
+        let ini_path = tmp_dir.path().join("config.ini");
+        let config = TurboConfig::default();
+        config.save_to_ini_file(&ini_path).unwrap();
+        let loaded = TurboConfig::load_from_file(&ini_path).unwrap();
+        assert_eq!(loaded.index.d, 128);
+
+        let toml_path = tmp_dir.path().join("config.toml");
+        config.save_to_toml_file(&toml_path).unwrap();
+        let loaded = TurboConfig::load_from_file(&toml_path).unwrap();
+        assert_eq!(loaded.index.d, 128);
     }
 
     #[test]

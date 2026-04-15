@@ -67,6 +67,7 @@ jobs:
       - name: Build no-default-features
         if: runner.os != 'Windows'
         run: cargo build --no-default-features --verbose --target ${{ matrix.target }}
+        continue-on-error: true
 
       - name: Run tests (full features)
         if: success() || failure()

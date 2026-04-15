@@ -43,6 +43,7 @@ use rocksdb::{
 use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, Options};
 use serde::{Deserialize, Serialize};
 
+use crate::config::RocksDBConfig;
 use crate::ivf::RaBitQIVFIndex;
 use crate::rabitq::RaBitQFlatIndex;
 use crate::sq8::SQ8Quantizer;
@@ -59,10 +60,6 @@ const CF_CLUSTER_META: &str = "cluster_meta";
 const CF_CODES_V1: &str = "codes";
 const CF_SQ8_V1: &str = "sq8";
 const CF_FACTORS_V1: &str = "factors";
-
-const BLOCK_CACHE_SIZE: usize = 512 * 1024 * 1024;
-const BLOOM_BITS_PER_KEY: f64 = 10.0;
-const RATE_LIMITER_BYTES_PER_SEC: i64 = 100 * 1024 * 1024;
 
 /// 索引类型标识
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -111,40 +108,45 @@ pub struct VectorStore {
 
 impl VectorStore {
     pub fn open(path: &Path) -> Result<Self, String> {
+        Self::open_with_config(path, &RocksDBConfig::default())
+    }
+
+    pub fn open_with_config(path: &Path, cfg: &RocksDBConfig) -> Result<Self, String> {
         let mut db_opts = Options::default();
         db_opts.create_if_missing(true);
         db_opts.create_missing_column_families(true);
-        db_opts.increase_parallelism(4);
-        db_opts.set_max_background_jobs(4);
-        db_opts.set_write_buffer_size(64 * 1024 * 1024);
-        db_opts.set_max_write_buffer_number(3);
-        db_opts.set_target_file_size_base(64 * 1024 * 1024);
-        db_opts.set_level_compaction_dynamic_level_bytes(true);
-        db_opts.set_max_open_files(-1);
-        db_opts.optimize_level_style_compaction(256 * 1024 * 1024);
+        db_opts.increase_parallelism(cfg.max_background_jobs);
+        db_opts.set_max_background_jobs(cfg.max_background_jobs);
+        db_opts.set_write_buffer_size(cfg.write_buffer_size());
+        db_opts.set_max_write_buffer_number(cfg.max_write_buffer_number);
+        db_opts.set_target_file_size_base(cfg.target_file_size_base() as u64);
+        db_opts.set_level_compaction_dynamic_level_bytes(cfg.level_compaction_dynamic_level_bytes);
+        db_opts.set_max_open_files(cfg.max_open_files);
+        db_opts.optimize_level_style_compaction(cfg.optimize_level_style_compaction());
         db_opts.enable_statistics();
-        db_opts.set_stats_dump_period_sec(60);
-        db_opts.set_ratelimiter(RATE_LIMITER_BYTES_PER_SEC, 100_000, 10);
+        db_opts.set_stats_dump_period_sec(cfg.stats_dump_period_sec);
+        db_opts.set_ratelimiter(cfg.rate_limiter_bytes_per_sec(), 100_000, 10);
+        db_opts.set_use_fsync(cfg.use_fsync);
 
         let mut env = Env::new().map_err(|e| format!("创建Env失败: {}", e))?;
-        env.set_background_threads(4);
-        env.set_high_priority_background_threads(2);
-        env.set_low_priority_background_threads(2);
+        env.set_background_threads(cfg.env_background_threads);
+        env.set_high_priority_background_threads(cfg.env_high_priority_threads);
+        env.set_low_priority_background_threads(cfg.env_low_priority_threads);
         db_opts.set_env(&env);
 
-        let cache = rocksdb::Cache::new_hyper_clock_cache(BLOCK_CACHE_SIZE, 0);
+        let cache = rocksdb::Cache::new_hyper_clock_cache(cfg.block_cache_size(), 0);
 
         let cf_descriptors = vec![
             ColumnFamilyDescriptor::new("default", Options::default()),
-            Self::build_rabitq_signs_cf(&cache),
-            Self::build_rabitq_factors_cf(&cache),
-            Self::build_rabitq_sq8_cf(),
-            Self::build_tq_codes_cf(&cache),
-            Self::build_tq_sq8_cf(),
+            Self::build_rabitq_signs_cf(&cache, cfg),
+            Self::build_rabitq_factors_cf(&cache, cfg),
+            Self::build_rabitq_sq8_cf(cfg),
+            Self::build_tq_codes_cf(&cache, cfg),
+            Self::build_tq_sq8_cf(cfg),
             ColumnFamilyDescriptor::new(CF_CENTROIDS, Options::default()),
             ColumnFamilyDescriptor::new(CF_CLUSTER_META, Options::default()),
-            Self::build_v1_codes_cf(&cache),
-            Self::build_v1_sq8_cf(),
+            Self::build_v1_codes_cf(&cache, cfg),
+            Self::build_v1_sq8_cf(cfg),
             ColumnFamilyDescriptor::new(CF_FACTORS_V1, Options::default()),
         ];
 
@@ -156,11 +158,14 @@ impl VectorStore {
 
     // ─── RaBitQ 专用 CF 配置 ───
 
-    fn build_rabitq_signs_cf(cache: &rocksdb::Cache) -> ColumnFamilyDescriptor {
+    fn build_rabitq_signs_cf(
+        cache: &rocksdb::Cache,
+        cfg: &RocksDBConfig,
+    ) -> ColumnFamilyDescriptor {
         let mut opts = Options::default();
         opts.set_compression_type(rocksdb::DBCompressionType::None);
-        opts.set_write_buffer_size(16 * 1024 * 1024);
-        opts.set_target_file_size_base(16 * 1024 * 1024);
+        opts.set_write_buffer_size(cfg.rabitq_signs_write_buffer());
+        opts.set_target_file_size_base(cfg.rabitq_signs_write_buffer() as u64);
         opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(2));
 
         let mut block_opts = BlockBasedOptions::default();
@@ -168,7 +173,7 @@ impl VectorStore {
         block_opts.set_hybrid_ribbon_filter(8.0, 1);
         block_opts.set_cache_index_and_filter_blocks(true);
         block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
-        block_opts.set_block_size(2 * 1024);
+        block_opts.set_block_size(cfg.rabitq_signs_block_size());
         block_opts.set_format_version(5);
         block_opts.set_index_type(BlockBasedIndexType::BinarySearch);
         opts.set_block_based_table_factory(&block_opts);
@@ -176,41 +181,44 @@ impl VectorStore {
         ColumnFamilyDescriptor::new(CF_RABITQ_SIGNS, opts)
     }
 
-    fn build_rabitq_factors_cf(cache: &rocksdb::Cache) -> ColumnFamilyDescriptor {
+    fn build_rabitq_factors_cf(
+        cache: &rocksdb::Cache,
+        cfg: &RocksDBConfig,
+    ) -> ColumnFamilyDescriptor {
         let mut opts = Options::default();
         opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-        opts.set_write_buffer_size(8 * 1024 * 1024);
-        opts.set_target_file_size_base(8 * 1024 * 1024);
+        opts.set_write_buffer_size(cfg.rabitq_factors_write_buffer());
+        opts.set_target_file_size_base(cfg.rabitq_factors_write_buffer() as u64);
 
         let mut block_opts = BlockBasedOptions::default();
         block_opts.set_block_cache(cache);
-        block_opts.set_hybrid_ribbon_filter(BLOOM_BITS_PER_KEY, 1);
+        block_opts.set_hybrid_ribbon_filter(cfg.bloom_bits_per_key, 1);
         block_opts.set_cache_index_and_filter_blocks(true);
-        block_opts.set_block_size(1 * 1024);
+        block_opts.set_block_size(cfg.rabitq_factors_block_size());
         block_opts.set_format_version(5);
         opts.set_block_based_table_factory(&block_opts);
 
         ColumnFamilyDescriptor::new(CF_RABITQ_FACTORS, opts)
     }
 
-    fn build_rabitq_sq8_cf() -> ColumnFamilyDescriptor {
+    fn build_rabitq_sq8_cf(cfg: &RocksDBConfig) -> ColumnFamilyDescriptor {
         let mut opts = Options::default();
         opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
         let mut cuckoo_opts = CuckooTableOptions::default();
-        cuckoo_opts.set_hash_ratio(0.9);
-        cuckoo_opts.set_max_search_depth(100);
+        cuckoo_opts.set_hash_ratio(cfg.cuckoo_hash_ratio);
+        cuckoo_opts.set_max_search_depth(cfg.cuckoo_max_search_depth);
         opts.set_cuckoo_table_factory(&cuckoo_opts);
         ColumnFamilyDescriptor::new(CF_RABITQ_SQ8, opts)
     }
 
     // ─── TurboQuant 专用 CF 配置 ───
 
-    fn build_tq_codes_cf(cache: &rocksdb::Cache) -> ColumnFamilyDescriptor {
+    fn build_tq_codes_cf(cache: &rocksdb::Cache, cfg: &RocksDBConfig) -> ColumnFamilyDescriptor {
         let mut opts = Options::default();
         opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-        opts.set_write_buffer_size(64 * 1024 * 1024);
-        opts.set_max_write_buffer_number(3);
-        opts.set_target_file_size_base(64 * 1024 * 1024);
+        opts.set_write_buffer_size(cfg.tq_codes_write_buffer());
+        opts.set_max_write_buffer_number(cfg.max_write_buffer_number);
+        opts.set_target_file_size_base(cfg.tq_codes_write_buffer() as u64);
 
         opts.set_compaction_filter("vector_cleanup", |_level, _key, value| {
             if value.is_empty() {
@@ -222,11 +230,11 @@ impl VectorStore {
 
         let mut block_opts = BlockBasedOptions::default();
         block_opts.set_block_cache(cache);
-        block_opts.set_hybrid_ribbon_filter(BLOOM_BITS_PER_KEY, 1);
+        block_opts.set_hybrid_ribbon_filter(cfg.bloom_bits_per_key, 1);
         block_opts.set_partition_filters(true);
         block_opts.set_cache_index_and_filter_blocks(true);
         block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
-        block_opts.set_block_size(8 * 1024);
+        block_opts.set_block_size(cfg.tq_codes_block_size());
         block_opts.set_format_version(5);
         block_opts.set_index_type(BlockBasedIndexType::TwoLevelIndexSearch);
         opts.set_block_based_table_factory(&block_opts);
@@ -234,28 +242,28 @@ impl VectorStore {
         ColumnFamilyDescriptor::new(CF_TQ_CODES, opts)
     }
 
-    fn build_tq_sq8_cf() -> ColumnFamilyDescriptor {
+    fn build_tq_sq8_cf(cfg: &RocksDBConfig) -> ColumnFamilyDescriptor {
         let mut opts = Options::default();
         opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
         let mut cuckoo_opts = CuckooTableOptions::default();
-        cuckoo_opts.set_hash_ratio(0.9);
-        cuckoo_opts.set_max_search_depth(100);
+        cuckoo_opts.set_hash_ratio(cfg.cuckoo_hash_ratio);
+        cuckoo_opts.set_max_search_depth(cfg.cuckoo_max_search_depth);
         opts.set_cuckoo_table_factory(&cuckoo_opts);
         ColumnFamilyDescriptor::new(CF_TQ_SQ8, opts)
     }
 
     // ─── V1 兼容 CF 配置 ───
 
-    fn build_v1_codes_cf(cache: &rocksdb::Cache) -> ColumnFamilyDescriptor {
+    fn build_v1_codes_cf(cache: &rocksdb::Cache, cfg: &RocksDBConfig) -> ColumnFamilyDescriptor {
         let mut opts = Options::default();
         opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
         opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(2));
 
         let mut block_opts = BlockBasedOptions::default();
         block_opts.set_block_cache(cache);
-        block_opts.set_hybrid_ribbon_filter(BLOOM_BITS_PER_KEY, 1);
+        block_opts.set_hybrid_ribbon_filter(cfg.bloom_bits_per_key, 1);
         block_opts.set_cache_index_and_filter_blocks(true);
-        block_opts.set_block_size(4 * 1024);
+        block_opts.set_block_size(cfg.v1_codes_block_size());
         block_opts.set_format_version(5);
         block_opts.set_index_type(BlockBasedIndexType::TwoLevelIndexSearch);
         opts.set_block_based_table_factory(&block_opts);
@@ -263,24 +271,23 @@ impl VectorStore {
         ColumnFamilyDescriptor::new(CF_CODES_V1, opts)
     }
 
-    fn build_v1_sq8_cf() -> ColumnFamilyDescriptor {
+    fn build_v1_sq8_cf(cfg: &RocksDBConfig) -> ColumnFamilyDescriptor {
         let mut opts = Options::default();
         opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
         let mut cuckoo_opts = CuckooTableOptions::default();
-        cuckoo_opts.set_hash_ratio(0.9);
-        cuckoo_opts.set_max_search_depth(100);
+        cuckoo_opts.set_hash_ratio(cfg.cuckoo_hash_ratio);
+        cuckoo_opts.set_max_search_depth(cfg.cuckoo_max_search_depth);
         opts.set_cuckoo_table_factory(&cuckoo_opts);
         ColumnFamilyDescriptor::new(CF_SQ8_V1, opts)
     }
 
-    // ─── 通用工具方法 ───
-
     fn read_opts_for_load() -> ReadOptions {
+        let cfg = RocksDBConfig::default();
         let mut opts = ReadOptions::default();
-        opts.set_verify_checksums(false);
+        opts.set_verify_checksums(cfg.verify_checksums);
         opts.fill_cache(true);
-        opts.set_readahead_size(64 * 1024);
-        opts.set_async_io(true);
+        opts.set_readahead_size(cfg.readahead_size());
+        opts.set_async_io(cfg.async_io);
         opts
     }
 
@@ -314,6 +321,14 @@ impl VectorStore {
 
     /// 保存 TurboQuant 索引 (V2: tq_codes + tq_sq8)
     pub fn save_turboquant(&self, index: &TurboQuantFlatIndex) -> Result<(), String> {
+        self.save_turboquant_with_config(index, &crate::config::IndexConfig::default())
+    }
+
+    pub fn save_turboquant_with_config(
+        &self,
+        index: &TurboQuantFlatIndex,
+        config: &crate::config::IndexConfig,
+    ) -> Result<(), String> {
         let meta = IndexMeta {
             index_type: IndexType::TurboQuant,
             d: index.d,
@@ -322,7 +337,7 @@ impl VectorStore {
             use_sq8: index.sq8.is_some(),
             is_inner_product: false,
             nlist: 0,
-            hadamard_seed: 12345,
+            hadamard_seed: config.hadamard_seed,
             kmeans_niter: 0,
             sq8_vmin: index.sq8.as_ref().map_or(vec![], |s| s.vmin.clone()),
             sq8_vmax: index.sq8.as_ref().map_or(vec![], |s| s.vmax.clone()),

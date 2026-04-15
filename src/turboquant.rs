@@ -17,6 +17,7 @@ use std::collections::BinaryHeap;
 
 use rayon::prelude::*;
 
+use crate::config::IndexConfig;
 use crate::hadamard::HadamardRotation;
 use crate::lloyd_max::LloydMaxQuantizer;
 use crate::sq8::SQ8Quantizer;
@@ -55,8 +56,12 @@ impl TurboQuantFlatIndex {
     /// # 返回值
     /// 初始化的索引
     pub fn new(d: usize, nbits: usize, use_sq8: bool) -> Self {
+        Self::with_config(d, nbits, use_sq8, &IndexConfig::default())
+    }
+
+    pub fn with_config(d: usize, nbits: usize, use_sq8: bool, cfg: &IndexConfig) -> Self {
         let d_rotated = next_power_of_2(d);
-        let rotation = HadamardRotation::new(d, 12345);
+        let rotation = HadamardRotation::new(d, cfg.hadamard_seed);
         let quantizer = LloydMaxQuantizer::new(d_rotated, nbits);
         let sq8 = if use_sq8 {
             Some(SQ8Quantizer::new(d))

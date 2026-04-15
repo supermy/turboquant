@@ -18,6 +18,7 @@
 use rayon::prelude::*;
 use std::collections::BinaryHeap;
 
+use crate::config::IndexConfig;
 use crate::kmeans::KMeans;
 use crate::rabitq::{compute_query_factors_into, QueryFactorsData, RaBitQCodec};
 use crate::sq8::SQ8Quantizer;
@@ -68,17 +69,11 @@ pub struct RaBitQIVFIndex {
     id_to_pos: Vec<(usize, usize)>,
     /// 聚类偏移前缀和 (cluster_offsets[c] = 前 c 个聚类的向量总数)
     cluster_offsets: Vec<usize>,
+    /// KMeans 随机种子
+    kmeans_seed: u64,
 }
 
 impl RaBitQIVFIndex {
-    /// 创建新的 RaBitQ IVF 索引
-    ///
-    /// # 参数
-    /// - `d`: 向量维度
-    /// - `nlist`: 聚类数量
-    /// - `nb_bits`: 量化位数
-    /// - `is_inner_product`: 是否为内积距离
-    /// - `use_sq8`: 是否使用 SQ8 refinement
     pub fn new(
         d: usize,
         nlist: usize,
@@ -86,7 +81,25 @@ impl RaBitQIVFIndex {
         is_inner_product: bool,
         use_sq8: bool,
     ) -> Self {
-        let kmeans = KMeans::new(d, nlist, 20);
+        Self::with_config(
+            d,
+            nlist,
+            nb_bits,
+            is_inner_product,
+            use_sq8,
+            &IndexConfig::default(),
+        )
+    }
+
+    pub fn with_config(
+        d: usize,
+        nlist: usize,
+        nb_bits: usize,
+        is_inner_product: bool,
+        use_sq8: bool,
+        cfg: &IndexConfig,
+    ) -> Self {
+        let kmeans = KMeans::new(d, nlist, cfg.kmeans_niter);
         let codecs: Vec<RaBitQCodec> = (0..nlist)
             .map(|_| RaBitQCodec::new(d, nb_bits, is_inner_product))
             .collect();
@@ -119,16 +132,12 @@ impl RaBitQIVFIndex {
             ntotal: 0,
             id_to_pos: Vec::new(),
             cluster_offsets: vec![0; nlist + 1],
+            kmeans_seed: cfg.kmeans_seed,
         }
     }
 
-    /// 训练索引
-    ///
-    /// 1. 训练 KMeans 聚类
-    /// 2. 训练每个聚类的 SQ8 量化器
     pub fn train(&mut self, data: &[f32], n: usize) {
-        // 训练 KMeans
-        self.kmeans.train(data, n, 42);
+        self.kmeans.train(data, n, self.kmeans_seed);
 
         // 复制聚类中心
         for i in 0..self.nlist {
@@ -450,13 +459,24 @@ pub struct TurboQuantIVFIndex {
     pub ntotal: usize,
     id_to_pos: Vec<(usize, usize)>,
     cluster_offsets: Vec<usize>,
+    kmeans_seed: u64,
 }
 
 impl TurboQuantIVFIndex {
     pub fn new(d: usize, nlist: usize, nbits: usize, use_sq8: bool) -> Self {
-        let kmeans = KMeans::new(d, nlist, 20);
+        Self::with_config(d, nlist, nbits, use_sq8, &IndexConfig::default())
+    }
+
+    pub fn with_config(
+        d: usize,
+        nlist: usize,
+        nbits: usize,
+        use_sq8: bool,
+        cfg: &IndexConfig,
+    ) -> Self {
+        let kmeans = KMeans::new(d, nlist, cfg.kmeans_niter);
         let d_rotated = crate::utils::next_power_of_2(d);
-        let rotation = crate::hadamard::HadamardRotation::new(d, 12345);
+        let rotation = crate::hadamard::HadamardRotation::new(d, cfg.hadamard_seed);
         let quantizer = crate::lloyd_max::LloydMaxQuantizer::new(d_rotated, nbits);
         let cluster_centroids = vec![vec![0.0; d]; nlist];
         let clusters = (0..nlist)
@@ -485,11 +505,12 @@ impl TurboQuantIVFIndex {
             ntotal: 0,
             id_to_pos: Vec::new(),
             cluster_offsets: vec![0; nlist + 1],
+            kmeans_seed: cfg.kmeans_seed,
         }
     }
 
     pub fn train(&mut self, data: &[f32], n: usize) {
-        self.kmeans.train(data, n, 42);
+        self.kmeans.train(data, n, self.kmeans_seed);
 
         for i in 0..self.nlist {
             self.cluster_centroids[i]

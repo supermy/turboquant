@@ -31,6 +31,7 @@ use rocksdb::{
 };
 use rocksdb::{ColumnFamily, ColumnFamilyDescriptor};
 
+use crate::config::{IndexConfig, RocksDBConfig};
 use crate::rabitq::{compute_query_factors_into, QueryFactorsData, RaBitQCodec};
 use crate::sq8::SQ8Quantizer;
 use crate::utils::{l2_distance_simd, FloatOrd};
@@ -40,8 +41,6 @@ const CF_RABITQ_FACTORS: &str = "rabitq_factors";
 const CF_RABITQ_SQ8: &str = "rabitq_sq8";
 const CF_CENTROIDS: &str = "centroids";
 const CF_CLUSTER_META: &str = "cluster_meta";
-
-const BLOCK_CACHE_SIZE: usize = 512 * 1024 * 1024;
 
 /// 聚类元数据
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -70,27 +69,30 @@ pub struct RocksDBIVFIndex {
 }
 
 impl RocksDBIVFIndex {
-    /// 打开或创建 RocksDB IVF 索引
     pub fn open(path: &Path) -> Result<Self, String> {
+        Self::open_with_config(path, &RocksDBConfig::default())
+    }
+
+    pub fn open_with_config(path: &Path, cfg: &RocksDBConfig) -> Result<Self, String> {
         let mut db_opts = Options::default();
         db_opts.create_if_missing(true);
         db_opts.create_missing_column_families(true);
-        db_opts.increase_parallelism(4);
-        db_opts.set_max_background_jobs(4);
-        db_opts.set_write_buffer_size(64 * 1024 * 1024);
-        db_opts.set_max_write_buffer_number(3);
-        db_opts.set_level_compaction_dynamic_level_bytes(true);
-        db_opts.set_max_open_files(-1);
-        db_opts.optimize_level_style_compaction(256 * 1024 * 1024);
-        db_opts.set_use_fsync(false);
+        db_opts.increase_parallelism(cfg.max_background_jobs);
+        db_opts.set_max_background_jobs(cfg.max_background_jobs);
+        db_opts.set_write_buffer_size(cfg.write_buffer_size());
+        db_opts.set_max_write_buffer_number(cfg.max_write_buffer_number);
+        db_opts.set_level_compaction_dynamic_level_bytes(cfg.level_compaction_dynamic_level_bytes);
+        db_opts.set_max_open_files(cfg.max_open_files);
+        db_opts.optimize_level_style_compaction(cfg.optimize_level_style_compaction());
+        db_opts.set_use_fsync(cfg.use_fsync);
 
-        let shared_cache = rocksdb::Cache::new_hyper_clock_cache(BLOCK_CACHE_SIZE, 0);
+        let shared_cache = rocksdb::Cache::new_hyper_clock_cache(cfg.block_cache_size(), 0);
 
         let signs_cf = {
             let mut opts = Options::default();
             opts.set_compression_type(rocksdb::DBCompressionType::None);
-            opts.set_write_buffer_size(16 * 1024 * 1024);
-            opts.set_target_file_size_base(16 * 1024 * 1024);
+            opts.set_write_buffer_size(cfg.rabitq_signs_write_buffer());
+            opts.set_target_file_size_base(cfg.rabitq_signs_write_buffer() as u64);
             opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(2));
 
             let mut block_opts = BlockBasedOptions::default();
@@ -98,7 +100,7 @@ impl RocksDBIVFIndex {
             block_opts.set_ribbon_filter(8.0);
             block_opts.set_cache_index_and_filter_blocks(true);
             block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
-            block_opts.set_block_size(2 * 1024);
+            block_opts.set_block_size(cfg.rabitq_signs_block_size());
             block_opts.set_format_version(5);
             block_opts.set_index_type(BlockBasedIndexType::BinarySearch);
             opts.set_block_based_table_factory(&block_opts);
@@ -109,13 +111,13 @@ impl RocksDBIVFIndex {
         let factors_cf = {
             let mut opts = Options::default();
             opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-            opts.set_write_buffer_size(8 * 1024 * 1024);
+            opts.set_write_buffer_size(cfg.rabitq_factors_write_buffer());
 
             let mut block_opts = BlockBasedOptions::default();
             block_opts.set_block_cache(&shared_cache);
-            block_opts.set_ribbon_filter(10.0);
+            block_opts.set_ribbon_filter(cfg.bloom_bits_per_key);
             block_opts.set_cache_index_and_filter_blocks(true);
-            block_opts.set_block_size(1 * 1024);
+            block_opts.set_block_size(cfg.rabitq_factors_block_size());
             block_opts.set_format_version(5);
             opts.set_block_based_table_factory(&block_opts);
 
@@ -126,8 +128,8 @@ impl RocksDBIVFIndex {
             let mut opts = Options::default();
             opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
             let mut cuckoo_opts = CuckooTableOptions::default();
-            cuckoo_opts.set_hash_ratio(0.9);
-            cuckoo_opts.set_max_search_depth(100);
+            cuckoo_opts.set_hash_ratio(cfg.cuckoo_hash_ratio);
+            cuckoo_opts.set_max_search_depth(cfg.cuckoo_max_search_depth);
             opts.set_cuckoo_table_factory(&cuckoo_opts);
             ColumnFamilyDescriptor::new(CF_RABITQ_SQ8, opts)
         };
@@ -601,25 +603,29 @@ pub struct RocksDBTQIVFIndex {
 
 impl RocksDBTQIVFIndex {
     pub fn open(path: &Path) -> Result<Self, String> {
+        Self::open_with_config(path, &RocksDBConfig::default())
+    }
+
+    pub fn open_with_config(path: &Path, cfg: &RocksDBConfig) -> Result<Self, String> {
         let mut db_opts = Options::default();
         db_opts.create_if_missing(true);
         db_opts.create_missing_column_families(true);
-        db_opts.increase_parallelism(4);
-        db_opts.set_max_background_jobs(4);
-        db_opts.set_write_buffer_size(64 * 1024 * 1024);
-        db_opts.set_max_write_buffer_number(3);
-        db_opts.set_level_compaction_dynamic_level_bytes(true);
-        db_opts.set_max_open_files(-1);
-        db_opts.optimize_level_style_compaction(256 * 1024 * 1024);
-        db_opts.set_use_fsync(false);
+        db_opts.increase_parallelism(cfg.max_background_jobs);
+        db_opts.set_max_background_jobs(cfg.max_background_jobs);
+        db_opts.set_write_buffer_size(cfg.write_buffer_size());
+        db_opts.set_max_write_buffer_number(cfg.max_write_buffer_number);
+        db_opts.set_level_compaction_dynamic_level_bytes(cfg.level_compaction_dynamic_level_bytes);
+        db_opts.set_max_open_files(cfg.max_open_files);
+        db_opts.optimize_level_style_compaction(cfg.optimize_level_style_compaction());
+        db_opts.set_use_fsync(cfg.use_fsync);
 
-        let shared_cache = rocksdb::Cache::new_hyper_clock_cache(BLOCK_CACHE_SIZE, 0);
+        let shared_cache = rocksdb::Cache::new_hyper_clock_cache(cfg.block_cache_size(), 0);
 
         let codes_cf = {
             let mut opts = Options::default();
             opts.set_compression_type(rocksdb::DBCompressionType::None);
-            opts.set_write_buffer_size(16 * 1024 * 1024);
-            opts.set_target_file_size_base(16 * 1024 * 1024);
+            opts.set_write_buffer_size(cfg.rabitq_signs_write_buffer());
+            opts.set_target_file_size_base(cfg.rabitq_signs_write_buffer() as u64);
             opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(2));
 
             let mut block_opts = BlockBasedOptions::default();
@@ -627,7 +633,7 @@ impl RocksDBTQIVFIndex {
             block_opts.set_ribbon_filter(8.0);
             block_opts.set_cache_index_and_filter_blocks(true);
             block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
-            block_opts.set_block_size(4 * 1024);
+            block_opts.set_block_size(cfg.tq_codes_block_size());
             block_opts.set_format_version(5);
             block_opts.set_index_type(BlockBasedIndexType::BinarySearch);
             opts.set_block_based_table_factory(&block_opts);
@@ -639,8 +645,8 @@ impl RocksDBTQIVFIndex {
             let mut opts = Options::default();
             opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
             let mut cuckoo_opts = CuckooTableOptions::default();
-            cuckoo_opts.set_hash_ratio(0.9);
-            cuckoo_opts.set_max_search_depth(100);
+            cuckoo_opts.set_hash_ratio(cfg.cuckoo_hash_ratio);
+            cuckoo_opts.set_max_search_depth(cfg.cuckoo_max_search_depth);
             opts.set_cuckoo_table_factory(&cuckoo_opts);
             ColumnFamilyDescriptor::new(CF_TQ_SQ8, opts)
         };
@@ -669,8 +675,14 @@ impl RocksDBTQIVFIndex {
             use_sq8: false,
             ntotal: 0,
             centroids: vec![],
-            quantizer: crate::lloyd_max::LloydMaxQuantizer::new(128, 4),
-            rotation: crate::hadamard::HadamardRotation::new(128, 12345),
+            quantizer: crate::lloyd_max::LloydMaxQuantizer::new(
+                IndexConfig::default().d,
+                IndexConfig::default().nbits,
+            ),
+            rotation: crate::hadamard::HadamardRotation::new(
+                IndexConfig::default().d,
+                IndexConfig::default().hadamard_seed,
+            ),
             sq8_quantizers: vec![],
             cluster_counts: vec![],
             cluster_offsets: vec![],
@@ -808,8 +820,8 @@ impl RocksDBTQIVFIndex {
             use_sq8: self.use_sq8,
             is_inner_product: false,
             nlist: index.nlist,
-            hadamard_seed: 12345,
-            kmeans_niter: 20,
+            hadamard_seed: IndexConfig::default().hadamard_seed,
+            kmeans_niter: IndexConfig::default().kmeans_niter,
             sq8_vmin: vec![],
             sq8_vmax: vec![],
             rabitq_centroid: vec![],

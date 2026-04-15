@@ -28,7 +28,7 @@ fn test_siftsmall_recall_and_qps() {
         return;
     }
 
-    let dataset = SiftSmallDataset::load(data_dir).unwrap();
+    let dataset = SiftSmallDataset::load(&data_dir).unwrap();
     let k = 10;
     let nq = dataset.nq;
     let nb = dataset.nb;

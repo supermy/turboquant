@@ -23,14 +23,11 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 
+use crate::config::ServerConfig;
 use crate::ivf::{RaBitQIVFIndex, TurboQuantIVFIndex};
 use crate::ivf_store::{RocksDBIVFIndex, RocksDBTQIVFIndex};
 use crate::rabitq::RaBitQFlatIndex;
 use crate::turboquant::TurboQuantFlatIndex;
-
-const DEFAULT_QUERY_URL: &str = "tcp://127.0.0.1:5555";
-const DEFAULT_WRITE_URL: &str = "tcp://127.0.0.1:5556";
-const DEFAULT_NOTIFY_URL: &str = "tcp://127.0.0.1:5557";
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub enum QueryRequest {
@@ -307,49 +304,45 @@ impl VectorEngineService {
 }
 
 pub struct TurboQuantServer {
-    query_url: String,
-    write_url: String,
-    notify_url: String,
-    n_workers: usize,
-    d: usize,
+    config: ServerConfig,
 }
 
 impl TurboQuantServer {
     pub fn new(d: usize) -> Self {
-        Self {
-            query_url: DEFAULT_QUERY_URL.to_string(),
-            write_url: DEFAULT_WRITE_URL.to_string(),
-            notify_url: DEFAULT_NOTIFY_URL.to_string(),
-            n_workers: 4,
-            d,
-        }
+        let mut config = ServerConfig::default();
+        config.d = d;
+        Self { config }
+    }
+
+    pub fn with_config(config: ServerConfig) -> Self {
+        Self { config }
     }
 
     pub fn with_query_url(mut self, url: &str) -> Self {
-        self.query_url = url.to_string();
+        self.config.query_url = url.to_string();
         self
     }
 
     pub fn with_write_url(mut self, url: &str) -> Self {
-        self.write_url = url.to_string();
+        self.config.write_url = url.to_string();
         self
     }
 
     pub fn with_notify_url(mut self, url: &str) -> Self {
-        self.notify_url = url.to_string();
+        self.config.notify_url = url.to_string();
         self
     }
 
     pub fn with_workers(mut self, n: usize) -> Self {
-        self.n_workers = n;
+        self.config.n_workers = n;
         self
     }
 
     pub fn run(self) -> Result<(), String> {
-        let engine = Arc::new(VectorEngineService::new(self.d));
-        let _query_url = self.query_url.clone();
-        let write_url = self.write_url.clone();
-        let notify_url = self.notify_url.clone();
+        let engine = Arc::new(VectorEngineService::new(self.config.d));
+        let _query_url = self.config.query_url.clone();
+        let write_url = self.config.write_url.clone();
+        let notify_url = self.config.notify_url.clone();
 
         let notify_sock = nng::Socket::new(nng::Protocol::Pub0)
             .map_err(|e| format!("创建 Pub0 socket 失败: {}", e))?;
@@ -363,7 +356,7 @@ impl TurboQuantServer {
             .listen(&write_url)
             .map_err(|e| format!("Rep0 (write) listen 失败: {}", e))?;
 
-        let query_sockets: Vec<nng::Socket> = (0..self.n_workers)
+        let query_sockets: Vec<nng::Socket> = (0..self.config.n_workers)
             .map(|i| {
                 let sock = nng::Socket::new(nng::Protocol::Rep0)
                     .map_err(|e| format!("创建 Rep0 (query) socket 失败: {}", e))?;
@@ -533,6 +526,6 @@ impl TurboQuantServer {
 
 impl Default for TurboQuantServer {
     fn default() -> Self {
-        Self::new(128)
+        Self::with_config(ServerConfig::default())
     }
 }

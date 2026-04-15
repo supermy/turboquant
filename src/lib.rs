@@ -19,6 +19,7 @@
 //! | RaBitQ 1-bit + SQ8 | 152B | 98.2% |
 //! | RaBitQ IVF + SQ8 | 152B | 98.7% |
 
+pub mod config;
 pub mod hadamard;
 pub mod ivf;
 pub mod ivf_store;
@@ -35,6 +36,7 @@ pub mod vector_engine_ffi;
 #[cfg(feature = "nng")]
 pub mod server;
 
+pub use config::{IndexConfig, RocksDBConfig, TurboConfig};
 pub use hadamard::HadamardRotation;
 pub use ivf::RaBitQIVFIndex;
 pub use ivf::TurboQuantIVFIndex;
